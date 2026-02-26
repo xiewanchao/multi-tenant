@@ -1,0 +1,72 @@
+# ReferenceGrant：允许 agentgateway-system 的 HTTPRoute 引用 httpbin namespace 的 Service
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-httpbin
+  namespace: httpbin
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+    name: httpbin
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: admin-api-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  hostnames:
+  - "www.example.com"
+  rules:
+  # 超级管理员 API
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/admin
+    filters:
+    # 将请求路径重写为 /anything/*，httpbin 会回显所有请求信息并返回 200
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /anything/api/v1/admin
+    backendRefs:
+    - name: httpbin
+      namespace: httpbin
+      port: 8000
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: tenant-api-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  hostnames:
+  - "www.example.com"
+  rules:
+  # 租户管理 API + 业务 API
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/tenants
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /anything/api/v1/tenants
+    backendRefs:
+    - name: httpbin
+      namespace: httpbin
+      port: 8000

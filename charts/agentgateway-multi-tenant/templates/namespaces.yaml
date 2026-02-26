@@ -1,0 +1,29 @@
+{{- if .Values.global.createNamespaces }}
+{{- $ns := .Values.global.namespaces }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns.agentgateway | quote }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns.keycloak | quote }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns.proxy | quote }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns.opa | quote }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns.opal | quote }}
+{{- end }}
+

@@ -1,0 +1,52 @@
+global:
+  hostnames:
+    - "www.example.com"
+  clusterDomain: "cluster.local"
+  namespaces:
+    agentgateway: "agentgateway-system"
+    keycloak: "keycloak"
+    proxy: "proxy-system"
+    opa: "opa"
+    opal: "opal"
+  gateway:
+    name: "agentgateway-proxy"
+    create: true
+    gatewayClassName: "agentgateway"
+    listener:
+      name: "http"
+      port: 80
+      protocol: HTTP
+  businessRoutes:
+    admin:
+      name: "admin-api-route"
+      pathPrefix: "/api/v1/admin"
+      backendService:
+        name: "httpbin"
+        namespace: "httpbin"
+        port: 8000
+      urlRewrite:
+        enabled: true
+        replacePrefixMatch: "/anything/api/v1/admin"
+      createReferenceGrant: true
+    tenant:
+      name: "tenant-api-route"
+      pathPrefix: "/api/v1/tenants"
+      backendService:
+        name: "httpbin"
+        namespace: "httpbin"
+        port: 8000
+      urlRewrite:
+        enabled: true
+        replacePrefixMatch: "/anything/api/v1/tenants"
+      createReferenceGrant: true
+  createNamespaces: true
+
+keycloak-idb-proxy:
+  enabled: true
+
+agentgateway:
+  enabled: true
+
+opa-opal-pep-proxy:
+  enabled: true
+

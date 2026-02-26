@@ -1,0 +1,29 @@
+upstream:
+  installCRDs: false
+  installController: false
+
+agentgateway-controller:
+  controller:
+    image:
+      pullPolicy: IfNotPresent
+    extraEnv:
+      KGW_ENABLE_GATEWAY_API_EXPERIMENTAL_FEATURES: "true"
+
+routes:
+  baseline:
+    enabled: true
+  keycloakOidc:
+    enabled: true
+    pathPrefix: "/realms"
+    service:
+      name: "keycloak"
+      port: 8080
+  jwtPolicy:
+    enabled: true
+    mode: Strict
+    providers:
+      - issuer: "http://www.example.com/realms/master"
+        jwksPath: "/realms/master/protocol/openid-connect/certs"
+      - issuer: "http://www.example.com/realms/acme"
+        jwksPath: "/realms/acme/protocol/openid-connect/certs"
+

@@ -1,0 +1,17 @@
+apiVersion: v2
+name: agentgateway
+description: AgentGateway routing and policy chart for multi-tenant stack
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: agentgateway-crds
+    repository: "oci://ghcr.io/kgateway-dev/charts"
+    version: "v2.2.0-main"
+    condition: upstream.installCRDs
+  - name: agentgateway
+    alias: agentgateway-controller
+    repository: "oci://ghcr.io/kgateway-dev/charts"
+    version: "v2.2.0-main"
+    condition: upstream.installController
+

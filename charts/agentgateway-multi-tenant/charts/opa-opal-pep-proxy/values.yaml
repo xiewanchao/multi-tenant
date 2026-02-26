@@ -1,0 +1,75 @@
+opa:
+  replicaCount: 1
+  image:
+    repository: openpolicyagent/opa
+    tag: "0.70.0-envoy"
+    pullPolicy: IfNotPresent
+  service:
+    grpcPort: 9191
+    httpPort: 8181
+  extAuth:
+    enabled: true
+  policyConfigMap:
+    enabled: true
+  resources: {}
+
+opal:
+  enabled: true
+  auth:
+    createSecret: true
+    existingSecret: ""
+    masterToken: "THIS_IS_A_DEV_SECRET_CHANGE_ME"
+    clientToken: "THIS_IS_A_DEV_SECRET_CHANGE_ME"
+  postgres:
+    enabled: true
+    image:
+      repository: postgres
+      tag: "16-alpine"
+      pullPolicy: IfNotPresent
+    host: ""
+    port: 5432
+    database: "opal"
+    username: "postgres"
+    password: "postgres"
+  server:
+    replicaCount: 1
+    image:
+      repository: permitio/opal-server
+      tag: "latest"
+      pullPolicy: IfNotPresent
+    servicePort: 7002
+    policyRepoUrl: "https://github.com/permitio/opal-example-policy-repo.git"
+  client:
+    replicaCount: 1
+    image:
+      repository: permitio/opal-client
+      tag: "latest"
+      pullPolicy: IfNotPresent
+
+pepProxy:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/your-org/pep-proxy-fastapi
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  policySyncBackend: "opal"
+  requestTimeout: 20
+  audit:
+    maxEvents: 1000
+    logPath: ""
+  opaVerifyTls: false
+  opalVerifyTls: false
+  opal:
+    dataTopic: "tenant_policies"
+    masterToken:
+      createSecret: true
+      existingSecret: ""
+      secretName: "pep-proxy-opal-auth"
+      key: "OPAL_MASTER_TOKEN"
+      value: "THIS_IS_A_DEV_SECRET_CHANGE_ME"
+  route:
+    enabled: true
+    pathPrefix: "/proxy/pep"
+  resources: {}

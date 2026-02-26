@@ -1,0 +1,620 @@
+﻿# multi-tenant-all.yaml
+# ============================================
+# OPA 澶氱鎴风瓥鐣?(ConfigMap)
+# ============================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policy
+  namespace: opa
+data:
+  policy.rego: |
+    package envoy.authz
+    import future.keywords.if
+    import future.keywords.in
+
+    import input.attributes.request.http as http_request
+
+    default allow := false
+
+    allow if {
+        http_request.path == "/health"
+        http_request.method == "GET"
+    }
+
+    _jwt_payload := payload if {
+        payload := input.attributes.metadataContext.filterMetadata["envoy.filters.http.jwt_authn"].jwt_payload
+    }
+
+    _token_tenant_id := _jwt_payload.tenant_id
+
+    _roles[role] {
+        some role in _jwt_payload.roles
+    }
+    _roles[role] {
+        not _jwt_payload.roles
+        some role in _jwt_payload.realm_access.roles
+    }
+
+    _claim_group := group if {
+        group := _jwt_payload.group
+        is_string(group)
+    }
+
+    _claim_group := group if {
+        groups := _jwt_payload.group
+        is_array(groups)
+        count(groups) > 0
+        group := groups[0]
+    }
+
+    _effective_group := group if {
+        group := _claim_group
+    }
+
+    # Keycloak user attribute mappers may not always emit "group".
+    # Fall back to a role-derived group so static fallback policy remains usable.
+    _effective_group := "admin" if {
+        not _claim_group
+        "tenant_admin" in _roles
+    }
+
+    _effective_group := "users" if {
+        not _claim_group
+        not "tenant_admin" in _roles
+    }
+    _username := _jwt_payload.preferred_username
+
+    _path_parts := split(http_request.path, "/")
+
+    _path_tenant_id := _path_parts[4] if {
+        count(_path_parts) > 4
+        _path_parts[1] == "api"
+        _path_parts[2] == "v1"
+        _path_parts[3] == "tenants"
+    }
+
+    _path_resource_type := _path_parts[5] if {
+        count(_path_parts) > 5
+    }
+
+    _tenant_match if {
+        _token_tenant_id == _path_tenant_id
+    }
+
+    # super admin
+    allow if {
+        http_request.method == "POST"
+        http_request.path == "/api/v1/admin/tenants"
+        _token_tenant_id == "master"
+        "super_admin" in _roles
+    }
+
+    allow if {
+        http_request.method == "GET"
+        http_request.path == "/api/v1/admin/tenants"
+        _token_tenant_id == "master"
+        "super_admin" in _roles
+    }
+
+    # tenant admin
+    _admin_resource_types := {"saml", "roles", "groups", "users", "policies"}
+
+    allow if {
+        _tenant_match
+        "tenant_admin" in _roles
+        _path_resource_type in _admin_resource_types
+    }
+
+    # app API dynamic policy
+    _is_app_path if {
+        _path_resource_type == "apps"
+    }
+
+    allow if {
+        _is_app_path
+        _tenant_match
+        policy := data.tenant_policies[_token_tenant_id][_]
+        policy.effect == "allow"
+        _subject_match(policy.subjects)
+        _resource_match(policy.resources)
+        _action_match(policy.actions)
+    }
+
+    _subject_match(subjects) if {
+        some subject in subjects
+        startswith(subject, "role:")
+        role := substring(subject, 5, -1)
+        role in _roles
+    }
+
+    _subject_match(subjects) if {
+        some subject in subjects
+        startswith(subject, "group:")
+        group := substring(subject, 6, -1)
+        group == _effective_group
+    }
+
+    _subject_match(subjects) if {
+        some subject in subjects
+        startswith(subject, "user:")
+        user := substring(subject, 5, -1)
+        user == _username
+    }
+
+    _resource_match(resources) if {
+        some resource in resources
+        glob.match(resource, ["/"], http_request.path)
+    }
+
+    _action_match(actions) if {
+        _method_action_map := {
+            "GET": "read",
+            "POST": "create",
+            "PUT": "update",
+            "PATCH": "update",
+            "DELETE": "delete",
+        }
+        action := _method_action_map[http_request.method]
+        action in actions
+    }
+
+    _action_match(actions) if {
+        lower(http_request.method) in actions
+    }
+
+    # 闈欐€佸洖閫€
+    allow if {
+        _is_app_path
+        _tenant_match
+        not data.tenant_policies[_token_tenant_id]
+        group := _effective_group
+        some permission in _static_group_permissions[group]
+        permission.method == http_request.method
+        glob.match(permission.path_pattern, ["/"], http_request.path)
+    }
+
+    _static_group_permissions := {
+        "admin": [
+            {"method": "GET",  "path_pattern": "/api/v1/tenants/*/apps/**"},
+            {"method": "POST", "path_pattern": "/api/v1/tenants/*/apps/**"},
+        ],
+        "users": [
+            {"method": "GET", "path_pattern": "/api/v1/tenants/*/apps/**"},
+        ],
+    }
+---
+# ============================================
+# OPA Deployment
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: opa
+  labels:
+    app: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      containers:
+      - name: opa
+        image: openpolicyagent/opa:0.70.0-envoy
+        args:
+        - "run"
+        - "--server"
+        - "--addr=0.0.0.0:8181"
+        - "--set=plugins.envoy_ext_authz_grpc.addr=:9191"
+        - "--set=plugins.envoy_ext_authz_grpc.path=envoy/authz/allow"
+        - "--set=decision_logs.console=true"
+        - "--ignore=.*"
+        - "/policy/policy.rego"
+        ports:
+        - containerPort: 9191
+          name: grpc
+        - containerPort: 8181
+          name: http
+        volumeMounts:
+        - name: opa-policy
+          mountPath: /policy
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8181
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health?plugins
+            port: 8181
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: opa-policy
+        configMap:
+          name: opa-policy
+---
+# ============================================
+# OPA Service锛坓RPC + HTTP锛?# ============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: opa
+  labels:
+    app: opa
+spec:
+  ports:
+  - port: 9191
+    targetPort: 9191
+    protocol: TCP
+    name: grpc
+    appProtocol: kubernetes.io/h2c
+  - port: 8181
+    targetPort: 8181
+    protocol: TCP
+    name: http
+  selector:
+    app: opa
+---
+# ============================================
+# OPAL (real-time policy data propagation)
+# ============================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: opal
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: opal-auth
+  namespace: opal
+type: Opaque
+stringData:
+  OPAL_AUTH_MASTER_TOKEN: THIS_IS_A_DEV_SECRET_CHANGE_ME
+  OPAL_CLIENT_TOKEN: THIS_IS_A_DEV_SECRET_CHANGE_ME
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: opal
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_DB
+          value: opal
+        - name: POSTGRES_USER
+          value: postgres
+        - name: POSTGRES_PASSWORD
+          value: postgres
+        ports:
+        - containerPort: 5432
+          name: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: opal
+spec:
+  selector:
+    app: postgres
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opal-server
+  namespace: opal
+  labels:
+    app: opal-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opal-server
+  template:
+    metadata:
+      labels:
+        app: opal-server
+    spec:
+      containers:
+      - name: opal-server
+        image: permitio/opal-server:latest
+        ports:
+        - containerPort: 7002
+          name: http
+        env:
+        - name: OPAL_POLICY_REPO_URL
+          value: https://github.com/permitio/opal-example-policy-repo.git
+        - name: OPAL_BROADCAST_URI
+          value: postgres://postgres:postgres@postgres.opal.svc.cluster.local:5432/opal
+        - name: OPAL_DATA_CONFIG_SOURCES
+          value: >-
+            {"config":{"entries":[{"url":"http://pep-proxy.proxy-system.svc.cluster.local:8080/opal/snapshots/tenant_policies","topics":["tenant_policies"],"dst_path":"/tenant_policies","save_method":"PUT"}]}}
+        - name: OPAL_AUTH_MASTER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: opal-auth
+              key: OPAL_AUTH_MASTER_TOKEN
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opal-server
+  namespace: opal
+spec:
+  selector:
+    app: opal-server
+  ports:
+  - name: http
+    port: 7002
+    targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opal-client
+  namespace: opal
+  labels:
+    app: opal-client
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opal-client
+  template:
+    metadata:
+      labels:
+        app: opal-client
+    spec:
+      containers:
+      - name: opal-client
+        image: permitio/opal-client:latest
+        env:
+        - name: OPAL_SERVER_URL
+          value: http://opal-server.opal.svc.cluster.local:7002
+        - name: OPAL_CLIENT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: opal-auth
+              key: OPAL_CLIENT_TOKEN
+        - name: OPAL_DATA_TOPICS
+          value: tenant_policies
+        - name: OPAL_INLINE_OPA_ENABLED
+          value: "false"
+        - name: POLICY_STORE_URL
+          value: http://opa.opa.svc.cluster.local:8181/v1
+        - name: OPAL_POLICY_STORE_URL
+          value: http://opa.opa.svc.cluster.local:8181/v1
+        - name: OPAL_POLICY_REPO_URL
+          value: https://github.com/permitio/opal-example-policy-repo.git
+---
+# ============================================
+# ReferenceGrant
+# ============================================
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-agentgateway-to-opa
+  namespace: opa
+spec:
+  from:
+  - group: agentgateway.dev
+    kind: AgentgatewayPolicy
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+    name: opa
+---
+# ============================================
+# ReferenceGrant 鈥?鍏佽 HTTPRoute 寮曠敤 Keycloak
+# ============================================
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-keycloak
+  namespace: keycloak
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+    name: keycloak
+---
+# ============================================
+# ReferenceGrant 鈥?鍏佽 HTTPRoute 寮曠敤 httpbin
+# ============================================
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-httpbin
+  namespace: httpbin
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+    name: httpbin
+---
+# ============================================
+# HTTPRoute 鈥?Keycloak OIDC 鍏嶈璇佷笓鍖?# ============================================
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: keycloak-oidc-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  hostnames:
+  - "www.example.com"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /realms
+    backendRefs:
+    - name: keycloak
+      namespace: keycloak
+      port: 8080
+---
+# ============================================
+# JWT 璁よ瘉绛栫暐锛堝 Realm锛夆€?缁戝畾鍒颁笟鍔¤矾鐢?# ============================================
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: admin-api-route
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: tenant-api-route
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: "http://www.example.com/realms/master"
+        jwks:
+          remote:
+            jwksPath: "/realms/master/protocol/openid-connect/certs"
+            cacheDuration: "5m"
+            backendRef:
+              group: ""
+              kind: Service
+              name: keycloak
+              namespace: keycloak
+              port: 8080
+      - issuer: "http://www.example.com/realms/acme"
+        jwks:
+          remote:
+            jwksPath: "/realms/acme/protocol/openid-connect/certs"
+            cacheDuration: "5m"
+            backendRef:
+              group: ""
+              kind: Service
+              name: keycloak
+              namespace: keycloak
+              port: 8080
+---
+# ============================================
+# OPA 澶栭儴鎺堟潈绛栫暐 鈥?缁戝畾鍒颁笟鍔¤矾鐢?# ============================================
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: opa-ext-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: admin-api-route
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: tenant-api-route
+  traffic:
+    extAuth:
+      backendRef:
+        name: opa
+        namespace: opa
+        port: 9191
+      grpc: {}
+---
+# ============================================
+# HTTPRoute 鈥?绠＄悊 API
+# ============================================
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: admin-api-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  hostnames:
+  - "www.example.com"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/admin
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /anything/api/v1/admin
+    backendRefs:
+    - name: httpbin
+      namespace: httpbin
+      port: 8000
+---
+# ============================================
+# HTTPRoute 鈥?绉熸埛 API
+# ============================================
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: tenant-api-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  hostnames:
+  - "www.example.com"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1/tenants
+    filters:
+    - type: URLRewrite
+      urlRewrite:
+        path:
+          type: ReplacePrefixMatch
+          replacePrefixMatch: /anything/api/v1/tenants
+    backendRefs:
+    - name: httpbin
+      namespace: httpbin
+      port: 8000
+

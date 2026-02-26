@@ -1,0 +1,194 @@
+{{- $g := .Values.global -}}
+{{- $ns := $g.namespaces -}}
+{{- $admin := $g.businessRoutes.admin -}}
+{{- $tenant := $g.businessRoutes.tenant -}}
+{{- $cfg := .Values.routes -}}
+
+{{- if $g.gateway.create }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ $g.gateway.name }}
+  namespace: {{ $ns.agentgateway }}
+spec:
+  gatewayClassName: {{ $g.gateway.gatewayClassName }}
+  listeners:
+    - protocol: {{ $g.gateway.listener.protocol }}
+      port: {{ $g.gateway.listener.port }}
+      name: {{ $g.gateway.listener.name }}
+      allowedRoutes:
+        namespaces:
+          from: All
+{{- end }}
+
+{{- if and $cfg.baseline.enabled $admin.createReferenceGrant (ne $admin.backendService.namespace $ns.agentgateway) }}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-{{ $admin.backendService.name }}
+  namespace: {{ $admin.backendService.namespace }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ $ns.agentgateway }}
+  to:
+    - group: ""
+      kind: Service
+      name: {{ $admin.backendService.name }}
+{{- end }}
+
+{{- if and $cfg.baseline.enabled $tenant.createReferenceGrant (ne $tenant.backendService.namespace $ns.agentgateway) (or (ne $tenant.backendService.namespace $admin.backendService.namespace) (ne $tenant.backendService.name $admin.backendService.name)) }}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-{{ $tenant.backendService.name }}
+  namespace: {{ $tenant.backendService.namespace }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ $ns.agentgateway }}
+  to:
+    - group: ""
+      kind: Service
+      name: {{ $tenant.backendService.name }}
+{{- end }}
+
+{{- if $cfg.baseline.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $admin.name }}
+  namespace: {{ $ns.agentgateway }}
+spec:
+  parentRefs:
+    - name: {{ $g.gateway.name }}
+      namespace: {{ $ns.agentgateway }}
+  hostnames:
+{{ toYaml $g.hostnames | indent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $admin.pathPrefix | quote }}
+{{- if $admin.urlRewrite.enabled }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: {{ $admin.urlRewrite.replacePrefixMatch | quote }}
+{{- end }}
+      backendRefs:
+        - name: {{ $admin.backendService.name }}
+          namespace: {{ $admin.backendService.namespace }}
+          port: {{ $admin.backendService.port }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $tenant.name }}
+  namespace: {{ $ns.agentgateway }}
+spec:
+  parentRefs:
+    - name: {{ $g.gateway.name }}
+      namespace: {{ $ns.agentgateway }}
+  hostnames:
+{{ toYaml $g.hostnames | indent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $tenant.pathPrefix | quote }}
+{{- if $tenant.urlRewrite.enabled }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: {{ $tenant.urlRewrite.replacePrefixMatch | quote }}
+{{- end }}
+      backendRefs:
+        - name: {{ $tenant.backendService.name }}
+          namespace: {{ $tenant.backendService.namespace }}
+          port: {{ $tenant.backendService.port }}
+{{- end }}
+
+{{- if $cfg.keycloakOidc.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-keycloak
+  namespace: {{ $ns.keycloak }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ $ns.agentgateway }}
+  to:
+    - group: ""
+      kind: Service
+      name: {{ $cfg.keycloakOidc.service.name }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: keycloak-oidc-route
+  namespace: {{ $ns.agentgateway }}
+spec:
+  parentRefs:
+    - name: {{ $g.gateway.name }}
+      namespace: {{ $ns.agentgateway }}
+  hostnames:
+{{ toYaml $g.hostnames | indent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $cfg.keycloakOidc.pathPrefix | quote }}
+      backendRefs:
+        - name: {{ $cfg.keycloakOidc.service.name }}
+          namespace: {{ $ns.keycloak }}
+          port: {{ $cfg.keycloakOidc.service.port }}
+{{- end }}
+
+{{- if $cfg.jwtPolicy.enabled }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth-policy
+  namespace: {{ $ns.agentgateway }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $admin.name }}
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $tenant.name }}
+  traffic:
+    jwtAuthentication:
+      mode: {{ $cfg.jwtPolicy.mode }}
+      providers:
+{{- range $p := $cfg.jwtPolicy.providers }}
+        - issuer: {{ $p.issuer | quote }}
+          jwks:
+            remote:
+              jwksPath: {{ $p.jwksPath | quote }}
+              cacheDuration: "5m"
+              backendRef:
+                group: ""
+                kind: Service
+                name: {{ $cfg.keycloakOidc.service.name }}
+                namespace: {{ $ns.keycloak }}
+                port: {{ $cfg.keycloakOidc.service.port }}
+{{- end }}
+{{- end }}
+

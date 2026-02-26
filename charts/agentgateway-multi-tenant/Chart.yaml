@@ -1,0 +1,20 @@
+apiVersion: v2
+name: agentgateway-multi-tenant
+description: Umbrella chart for AgentGateway multi-tenant identity and policy control stack
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+dependencies:
+  - name: keycloak-idb-proxy
+    version: 0.1.0
+    repository: "file://charts/keycloak-idb-proxy"
+    condition: keycloak-idb-proxy.enabled
+  - name: agentgateway
+    version: 0.1.0
+    repository: "file://charts/agentgateway"
+    condition: agentgateway.enabled
+  - name: opa-opal-pep-proxy
+    version: 0.1.0
+    repository: "file://charts/opa-opal-pep-proxy"
+    condition: opa-opal-pep-proxy.enabled
+

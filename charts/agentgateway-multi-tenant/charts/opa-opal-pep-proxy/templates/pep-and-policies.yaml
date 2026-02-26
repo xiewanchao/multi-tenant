@@ -1,0 +1,183 @@
+{{- $g := .Values.global -}}
+{{- $ns := $g.namespaces -}}
+{{- $opa := .Values.opa -}}
+{{- $opal := .Values.opal -}}
+{{- $pep := .Values.pepProxy -}}
+{{- $pepTokenSecret := default $pep.opal.masterToken.secretName $pep.opal.masterToken.existingSecret -}}
+
+{{- if and $pep.opal.masterToken.createSecret (not $pep.opal.masterToken.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $pepTokenSecret }}
+  namespace: {{ $ns.proxy }}
+type: Opaque
+stringData:
+  {{ $pep.opal.masterToken.key }}: {{ $pep.opal.masterToken.value | quote }}
+{{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pep-proxy
+  namespace: {{ $ns.proxy }}
+  labels:
+    app: pep-proxy
+spec:
+  replicas: {{ $pep.replicaCount }}
+  selector:
+    matchLabels:
+      app: pep-proxy
+  template:
+    metadata:
+      labels:
+        app: pep-proxy
+    spec:
+      containers:
+        - name: pep-proxy
+          image: "{{ $pep.image.repository }}:{{ $pep.image.tag }}"
+          imagePullPolicy: {{ $pep.image.pullPolicy }}
+          ports:
+            - containerPort: {{ $pep.service.port }}
+              name: http
+          env:
+            - name: POLICY_SYNC_BACKEND
+              value: {{ $pep.policySyncBackend | quote }}
+            - name: OPA_URL
+              value: {{ printf "http://opa.%s.svc.%s:%v" $ns.opa $g.clusterDomain $opa.service.httpPort | quote }}
+            - name: OPAL_SERVER_URL
+              value: {{ printf "http://opal-server.%s.svc.%s:%v" $ns.opal $g.clusterDomain $opal.server.servicePort | quote }}
+            - name: OPAL_MASTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $pepTokenSecret }}
+                  key: {{ $pep.opal.masterToken.key }}
+            - name: OPAL_DATA_TOPIC
+              value: {{ $pep.opal.dataTopic | quote }}
+            - name: OPA_VERIFY_TLS
+              value: {{ ternary "true" "false" $pep.opaVerifyTls | quote }}
+            - name: OPAL_VERIFY_TLS
+              value: {{ ternary "true" "false" $pep.opalVerifyTls | quote }}
+            - name: REQUEST_TIMEOUT
+              value: {{ $pep.requestTimeout | quote }}
+            - name: AUDIT_MAX_EVENTS
+              value: {{ default 1000 $pep.audit.maxEvents | quote }}
+            - name: AUDIT_LOG_PATH
+              value: {{ default "" $pep.audit.logPath | quote }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+{{- with $pep.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pep-proxy
+  namespace: {{ $ns.proxy }}
+  labels:
+    app: pep-proxy
+spec:
+  selector:
+    app: pep-proxy
+  ports:
+    - name: http
+      port: {{ $pep.service.port }}
+      targetPort: http
+
+{{- if $pep.route.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-pep-proxy
+  namespace: {{ $ns.proxy }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ $ns.agentgateway }}
+  to:
+    - group: ""
+      kind: Service
+      name: pep-proxy
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: pep-proxy-route
+  namespace: {{ $ns.agentgateway }}
+spec:
+  parentRefs:
+    - name: {{ $g.gateway.name }}
+      namespace: {{ $ns.agentgateway }}
+  hostnames:
+{{ toYaml $g.hostnames | indent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $pep.route.pathPrefix | quote }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: pep-proxy
+          namespace: {{ $ns.proxy }}
+          port: {{ $pep.service.port }}
+{{- end }}
+
+{{- if $opa.extAuth.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-agentgateway-to-opa
+  namespace: {{ $ns.opa }}
+spec:
+  from:
+    - group: agentgateway.dev
+      kind: AgentgatewayPolicy
+      namespace: {{ $ns.agentgateway }}
+  to:
+    - group: ""
+      kind: Service
+      name: opa
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: opa-ext-auth-policy
+  namespace: {{ $ns.agentgateway }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $g.businessRoutes.admin.name }}
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $g.businessRoutes.tenant.name }}
+  traffic:
+    extAuth:
+      backendRef:
+        name: opa
+        namespace: {{ $ns.opa }}
+        port: {{ $opa.service.grpcPort }}
+      grpc: {}
+{{- end }}

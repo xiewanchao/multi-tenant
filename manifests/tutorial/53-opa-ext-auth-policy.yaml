@@ -1,0 +1,21 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: opa-ext-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  # 仅绑定到业务路由，不绑定到 Gateway 整体
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: admin-api-route
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: tenant-api-route
+  traffic:
+    extAuth:
+      backendRef:
+        name: opa
+        namespace: opa
+        port: 9191
+      grpc: {}

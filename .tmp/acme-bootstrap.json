@@ -1,0 +1,1 @@
+{"tenant_id":"acme","display_name":"ACME Corp","client_id":"acme-gateway-client","client_uuid":"7e939ec6-4cb1-41d6-b090-187ec801367e","client_secret":"IxbAhhtMqa5PNR6lNiipItIMCRIkaHh5","tenant_admin":"alice","users":[{"username":"bob","roles":["analyst"],"groups":["/users"]},{"username":"charlie","roles":["viewer"],"groups":["/users"]}],"jwt_provider_sync":null}

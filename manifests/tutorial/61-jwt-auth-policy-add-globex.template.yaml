@@ -1,0 +1,51 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  # 仅绑定到业务路由（Keycloak 免认证路由不受影响）
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: admin-api-route
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: tenant-api-route
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: "${MASTER_ISSUER}"
+        jwks:
+          remote:
+            jwksPath: "${MASTER_JWKS_PATH}"
+            cacheDuration: "5m"
+            backendRef:
+              group: ""
+              kind: Service
+              name: keycloak
+              namespace: keycloak
+              port: 8080
+      - issuer: "${ACME_ISSUER}"
+        jwks:
+          remote:
+            jwksPath: "${ACME_JWKS_PATH}"
+            cacheDuration: "5m"
+            backendRef:
+              group: ""
+              kind: Service
+              name: keycloak
+              namespace: keycloak
+              port: 8080
+      - issuer: "${GLOBEX_ISSUER}"
+        jwks:
+          remote:
+            jwksPath: "${GLOBEX_JWKS_PATH}"
+            cacheDuration: "5m"
+            backendRef:
+              group: ""
+              kind: Service
+              name: keycloak
+              namespace: keycloak
+              port: 8080

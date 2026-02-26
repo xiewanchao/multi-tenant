@@ -1,0 +1,43 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  # 仅绑定到业务路由，不绑定到 Gateway 整体
+  # 注意：targetRefs 不支持 namespace 字段，Policy 和 HTTPRoute 必须在同一 namespace
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: admin-api-route
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: tenant-api-route
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      # Provider 1：master realm（超级管理员）
+      - issuer: "${MASTER_ISSUER}"
+        jwks:
+          remote:
+            jwksPath: "${MASTER_JWKS_PATH}"
+            cacheDuration: "5m"
+            backendRef:
+              group: ""
+              kind: Service
+              name: keycloak
+              namespace: keycloak
+              port: 8080
+      # Provider 2：acme 租户 realm
+      - issuer: "${ACME_ISSUER}"
+        jwks:
+          remote:
+            jwksPath: "${ACME_JWKS_PATH}"
+            cacheDuration: "5m"
+            backendRef:
+              group: ""
+              kind: Service
+              name: keycloak
+              namespace: keycloak
+              port: 8080

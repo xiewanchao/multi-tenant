@@ -1,0 +1,53 @@
+keycloak:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: quay.io/keycloak/keycloak
+    tag: "26.1.2"
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  command:
+    - "start-dev"
+    - "--http-port=8080"
+    - "--proxy-headers=xforwarded"
+    - "--hostname-strict=false"
+  admin:
+    createSecret: true
+    existingSecret: ""
+    username: "admin"
+    password: "admin"
+  resources: {}
+
+idbProxy:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/your-org/idb-proxy-fastapi
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  service:
+    port: 8080
+  keycloak:
+    url: ""
+    verifyTls: false
+    adminSecretName: ""
+  requestTimeout: 20
+  audit:
+    maxEvents: 1000
+    logPath: ""
+  jwtProviderAutoRegistration:
+    enabled: false
+    keycloakPublicIssuerBaseUrl: ""
+    agentgatewayPolicyNamespace: "agentgateway-system"
+    agentgatewayPolicyName: "jwt-auth-policy"
+    keycloakService:
+      name: "keycloak"
+      namespace: "keycloak"
+      port: 8080
+    rbac:
+      create: false
+      serviceAccountName: "idb-proxy"
+  resources: {}
+  route:
+    enabled: true
+    pathPrefix: "/proxy/idb"

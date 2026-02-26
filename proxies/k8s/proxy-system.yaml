@@ -1,0 +1,152 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: proxy-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: keycloak-admin-credentials
+  namespace: proxy-system
+type: Opaque
+stringData:
+  KEYCLOAK_ADMIN_USER: admin
+  KEYCLOAK_ADMIN_PASSWORD: admin
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idb-proxy
+  namespace: proxy-system
+  labels:
+    app: idb-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: idb-proxy
+  template:
+    metadata:
+      labels:
+        app: idb-proxy
+    spec:
+      containers:
+      - name: idb-proxy
+        image: idb-proxy-fastapi:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: KEYCLOAK_URL
+          value: http://keycloak.keycloak.svc.cluster.local:8080
+        - name: KEYCLOAK_ADMIN_USER
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_ADMIN_USER
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_ADMIN_PASSWORD
+        - name: KEYCLOAK_VERIFY_TLS
+          value: "false"
+        - name: REQUEST_TIMEOUT
+          value: "20"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: idb-proxy
+  namespace: proxy-system
+  labels:
+    app: idb-proxy
+spec:
+  selector:
+    app: idb-proxy
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pep-proxy
+  namespace: proxy-system
+  labels:
+    app: pep-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pep-proxy
+  template:
+    metadata:
+      labels:
+        app: pep-proxy
+    spec:
+      containers:
+      - name: pep-proxy
+        image: pep-proxy-fastapi:local
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: POLICY_SYNC_BACKEND
+          value: opal
+        - name: OPA_URL
+          value: http://opa.opa.svc.cluster.local:8181
+        - name: OPAL_SERVER_URL
+          value: http://opal-server.opal.svc.cluster.local:7002
+        - name: OPAL_MASTER_TOKEN
+          value: THIS_IS_A_DEV_SECRET_CHANGE_ME
+        - name: OPAL_DATA_TOPIC
+          value: tenant_policies
+        - name: OPA_VERIFY_TLS
+          value: "false"
+        - name: OPAL_VERIFY_TLS
+          value: "false"
+        - name: REQUEST_TIMEOUT
+          value: "20"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pep-proxy
+  namespace: proxy-system
+  labels:
+    app: pep-proxy
+spec:
+  selector:
+    app: pep-proxy
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http

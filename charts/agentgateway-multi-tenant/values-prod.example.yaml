@@ -1,0 +1,164 @@
+global:
+  hostnames:
+    - "api.company.example"
+  clusterDomain: "cluster.local"
+  namespaces:
+    agentgateway: "agentgateway-system"
+    keycloak: "identity-system"
+    proxy: "proxy-system"
+    opa: "opa-system"
+    opal: "opal-system"
+  gateway:
+    name: "agentgateway-proxy"
+    create: true
+    gatewayClassName: "agentgateway"
+    listener:
+      name: "http"
+      port: 80
+      protocol: HTTP
+  businessRoutes:
+    admin:
+      backendService:
+        name: "tenant-admin-api"
+        namespace: "business-api"
+        port: 8080
+      urlRewrite:
+        enabled: false
+      createReferenceGrant: true
+    tenant:
+      backendService:
+        name: "tenant-app-api"
+        namespace: "business-api"
+        port: 8080
+      urlRewrite:
+        enabled: false
+      createReferenceGrant: true
+
+keycloak-idb-proxy:
+  keycloak:
+    enabled: true
+    image:
+      repository: quay.io/keycloak/keycloak
+      tag: "26.1.2"
+      pullPolicy: IfNotPresent
+    replicaCount: 2
+    service:
+      port: 8080
+    command:
+      - "start-dev"
+      - "--http-port=8080"
+      - "--proxy-headers=xforwarded"
+      - "--hostname-strict=false"
+    admin:
+      createSecret: false
+      existingSecret: "keycloak-admin-credentials"
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+  idbProxy:
+    replicaCount: 2
+    image:
+      repository: ghcr.io/your-org/idb-proxy-fastapi
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    keycloak:
+      url: "http://keycloak.identity-system.svc.cluster.local:8080"
+      verifyTls: false
+      adminSecretName: "keycloak-admin-credentials"
+    audit:
+      maxEvents: 5000
+      logPath: ""
+    jwtProviderAutoRegistration:
+      enabled: true
+      keycloakPublicIssuerBaseUrl: "http://api.company.example"
+      agentgatewayPolicyNamespace: "agentgateway-system"
+      agentgatewayPolicyName: "jwt-auth-policy"
+      keycloakService:
+        name: "keycloak"
+        namespace: "identity-system"
+        port: 8080
+      rbac:
+        create: true
+        serviceAccountName: "idb-proxy"
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+
+agentgateway:
+  upstream:
+    installCRDs: false
+    installController: false
+  routes:
+    keycloakOidc:
+      pathPrefix: "/realms"
+      service:
+        name: "keycloak"
+        port: 8080
+    jwtPolicy:
+      enabled: true
+      providers:
+        - issuer: "http://api.company.example/realms/master"
+          jwksPath: "/realms/master/protocol/openid-connect/certs"
+        - issuer: "http://api.company.example/realms/acme"
+          jwksPath: "/realms/acme/protocol/openid-connect/certs"
+
+opa-opal-pep-proxy:
+  opa:
+    replicaCount: 2
+    image:
+      repository: openpolicyagent/opa
+      tag: "0.70.0-envoy"
+      pullPolicy: IfNotPresent
+  opal:
+    enabled: true
+    auth:
+      existingSecret: "opal-auth"
+      createSecret: false
+    postgres:
+      enabled: false
+      host: "postgresql-ha-rw.database.svc.cluster.local"
+      port: 5432
+      database: "opal"
+      username: "opal"
+      password: "REPLACE_ME"
+    server:
+      replicaCount: 2
+      image:
+        repository: permitio/opal-server
+        tag: "0.7.4"
+        pullPolicy: IfNotPresent
+      policyRepoUrl: "https://github.com/permitio/opal-example-policy-repo.git"
+    client:
+      replicaCount: 2
+      image:
+        repository: permitio/opal-client
+        tag: "0.7.4"
+        pullPolicy: IfNotPresent
+  pepProxy:
+    replicaCount: 2
+    image:
+      repository: ghcr.io/your-org/pep-proxy-fastapi
+      tag: "0.1.0"
+      pullPolicy: IfNotPresent
+    audit:
+      maxEvents: 5000
+      logPath: ""
+    opal:
+      masterToken:
+        existingSecret: "pep-proxy-opal-auth"
+        createSecret: false
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"

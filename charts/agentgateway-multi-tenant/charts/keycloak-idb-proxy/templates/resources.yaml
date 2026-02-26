@@ -1,0 +1,295 @@
+{{- $g := .Values.global -}}
+{{- $ns := $g.namespaces -}}
+{{- $kc := .Values.keycloak -}}
+{{- $idb := .Values.idbProxy -}}
+{{- $kcAdminSecret := (default "keycloak-admin-credentials" $kc.admin.existingSecret) -}}
+{{- $idbAdminSecret := (default $kcAdminSecret $idb.keycloak.adminSecretName) -}}
+{{- $kcURL := $idb.keycloak.url -}}
+{{- $jwtAuto := $idb.jwtProviderAutoRegistration -}}
+{{- $rbac := $jwtAuto.rbac -}}
+{{- $idbServiceAccount := default "idb-proxy" $rbac.serviceAccountName -}}
+{{- if not $kcURL -}}
+{{- $kcURL = printf "http://keycloak.%s.svc.%s:%v" $ns.keycloak $g.clusterDomain $kc.service.port -}}
+{{- end -}}
+
+{{- if and $kc.enabled $kc.admin.createSecret (not $kc.admin.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $kcAdminSecret }}
+  namespace: {{ $ns.keycloak }}
+type: Opaque
+stringData:
+  KEYCLOAK_ADMIN_USER: {{ $kc.admin.username | quote }}
+  KEYCLOAK_ADMIN_PASSWORD: {{ $kc.admin.password | quote }}
+{{- end }}
+
+{{- if $kc.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ $ns.keycloak }}
+  labels:
+    app: keycloak
+spec:
+  replicas: {{ $kc.replicaCount }}
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      containers:
+        - name: keycloak
+          image: "{{ $kc.image.repository }}:{{ $kc.image.tag }}"
+          imagePullPolicy: {{ $kc.image.pullPolicy }}
+          command:
+            - /opt/keycloak/bin/kc.sh
+          args:
+{{ toYaml $kc.command | indent 12 }}
+          env:
+            - name: KEYCLOAK_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kcAdminSecret }}
+                  key: KEYCLOAK_ADMIN_USER
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $kcAdminSecret }}
+                  key: KEYCLOAK_ADMIN_PASSWORD
+          ports:
+            - containerPort: {{ $kc.service.port }}
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+{{- with $kc.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ $ns.keycloak }}
+  labels:
+    app: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: {{ $kc.service.port }}
+      targetPort: http
+{{- end }}
+
+{{- if and $idb.keycloak.adminSecretName (ne $idb.keycloak.adminSecretName $kcAdminSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $idb.keycloak.adminSecretName }}
+  namespace: {{ $ns.proxy }}
+type: Opaque
+stringData:
+  KEYCLOAK_ADMIN_USER: "admin"
+  KEYCLOAK_ADMIN_PASSWORD: "change-me"
+{{- else if and $kc.enabled $kc.admin.createSecret (not $kc.admin.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $idbAdminSecret }}
+  namespace: {{ $ns.proxy }}
+type: Opaque
+stringData:
+  KEYCLOAK_ADMIN_USER: {{ $kc.admin.username | quote }}
+  KEYCLOAK_ADMIN_PASSWORD: {{ $kc.admin.password | quote }}
+{{- end }}
+
+{{- if and $jwtAuto.enabled $rbac.create }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $idbServiceAccount }}
+  namespace: {{ $ns.proxy }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-agentgateway-policy-editor" $idbServiceAccount }}
+rules:
+  - apiGroups: ["agentgateway.dev"]
+    resources: ["agentgatewaypolicies"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-agentgateway-policy-editor" $idbServiceAccount }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-agentgateway-policy-editor" $idbServiceAccount }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $idbServiceAccount }}
+    namespace: {{ $ns.proxy }}
+{{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: idb-proxy
+  namespace: {{ $ns.proxy }}
+  labels:
+    app: idb-proxy
+spec:
+  replicas: {{ $idb.replicaCount }}
+  selector:
+    matchLabels:
+      app: idb-proxy
+  template:
+    metadata:
+      labels:
+        app: idb-proxy
+    spec:
+{{- if and $jwtAuto.enabled $rbac.create }}
+      serviceAccountName: {{ $idbServiceAccount }}
+{{- end }}
+      containers:
+        - name: idb-proxy
+          image: "{{ $idb.image.repository }}:{{ $idb.image.tag }}"
+          imagePullPolicy: {{ $idb.image.pullPolicy }}
+          ports:
+            - containerPort: {{ $idb.service.port }}
+              name: http
+          env:
+            - name: KEYCLOAK_URL
+              value: {{ $kcURL | quote }}
+            - name: KEYCLOAK_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $idbAdminSecret }}
+                  key: KEYCLOAK_ADMIN_USER
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $idbAdminSecret }}
+                  key: KEYCLOAK_ADMIN_PASSWORD
+            - name: KEYCLOAK_VERIFY_TLS
+              value: {{ ternary "true" "false" $idb.keycloak.verifyTls | quote }}
+            - name: REQUEST_TIMEOUT
+              value: {{ $idb.requestTimeout | quote }}
+            - name: AUDIT_MAX_EVENTS
+              value: {{ default 1000 $idb.audit.maxEvents | quote }}
+            - name: AUDIT_LOG_PATH
+              value: {{ default "" $idb.audit.logPath | quote }}
+            - name: ENABLE_JWT_PROVIDER_AUTOREG
+              value: {{ ternary "true" "false" $jwtAuto.enabled | quote }}
+            - name: KEYCLOAK_PUBLIC_ISSUER_BASE_URL
+              value: {{ default "" $jwtAuto.keycloakPublicIssuerBaseUrl | quote }}
+            - name: AGENTGATEWAY_POLICY_NAMESPACE
+              value: {{ default $ns.agentgateway $jwtAuto.agentgatewayPolicyNamespace | quote }}
+            - name: AGENTGATEWAY_POLICY_NAME
+              value: {{ default "jwt-auth-policy" $jwtAuto.agentgatewayPolicyName | quote }}
+            - name: AGENTGATEWAY_KEYCLOAK_SERVICE_NAME
+              value: {{ default "keycloak" $jwtAuto.keycloakService.name | quote }}
+            - name: AGENTGATEWAY_KEYCLOAK_SERVICE_NAMESPACE
+              value: {{ default $ns.keycloak $jwtAuto.keycloakService.namespace | quote }}
+            - name: AGENTGATEWAY_KEYCLOAK_SERVICE_PORT
+              value: {{ default $kc.service.port $jwtAuto.keycloakService.port | quote }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+{{- with $idb.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: idb-proxy
+  namespace: {{ $ns.proxy }}
+  labels:
+    app: idb-proxy
+spec:
+  selector:
+    app: idb-proxy
+  ports:
+    - name: http
+      port: {{ $idb.service.port }}
+      targetPort: http
+
+{{- if $idb.route.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-idb-proxy
+  namespace: {{ $ns.proxy }}
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: {{ $ns.agentgateway }}
+  to:
+    - group: ""
+      kind: Service
+      name: idb-proxy
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: idb-proxy-route
+  namespace: {{ $ns.agentgateway }}
+spec:
+  parentRefs:
+    - name: {{ $g.gateway.name }}
+      namespace: {{ $ns.agentgateway }}
+  hostnames:
+{{ toYaml $g.hostnames | indent 4 }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $idb.route.pathPrefix | quote }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      backendRefs:
+        - name: idb-proxy
+          namespace: {{ $ns.proxy }}
+          port: {{ $idb.service.port }}
+{{- end }}

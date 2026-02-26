@@ -1,0 +1,7 @@
+apiVersion: v2
+name: opa-opal-pep-proxy
+description: OPA ext_authz, OPAL sync, and PEP proxy stack
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+

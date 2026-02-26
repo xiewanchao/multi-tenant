@@ -1,0 +1,42 @@
+# ReferenceGrant：允许 agentgateway-system 的 HTTPRoute 引用 keycloak namespace 的 Service
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-to-keycloak
+  namespace: keycloak
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: agentgateway-system
+  to:
+  - group: ""
+    kind: Service
+    name: keycloak
+---
+# HTTPRoute：Keycloak OIDC 端点（免认证专区）
+# 此路由不绑定任何 JWT/OPA 策略，流量可无 token 通行
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: keycloak-oidc-route
+  namespace: agentgateway-system
+spec:
+  parentRefs:
+  - name: agentgateway-proxy
+    namespace: agentgateway-system
+  hostnames:
+  - "www.example.com"
+  rules:
+  # /realms/* 覆盖所有 realm 的 OIDC 端点:
+  #   - token 签发:    /realms/{realm}/protocol/openid-connect/token
+  #   - JWKS 公钥:     /realms/{realm}/protocol/openid-connect/certs
+  #   - OIDC Discovery: /realms/{realm}/.well-known/openid-configuration
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /realms
+    backendRefs:
+    - name: keycloak
+      namespace: keycloak
+      port: 8080

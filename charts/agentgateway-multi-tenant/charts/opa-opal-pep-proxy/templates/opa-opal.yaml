@@ -1,0 +1,262 @@
+{{- $g := .Values.global -}}
+{{- $ns := $g.namespaces -}}
+{{- $opa := .Values.opa -}}
+{{- $opal := .Values.opal -}}
+{{- $pep := .Values.pepProxy -}}
+{{- $opalAuthSecret := default "opal-auth" $opal.auth.existingSecret -}}
+{{- $opalPgHost := $opal.postgres.host -}}
+{{- if and $opal.enabled (not $opalPgHost) -}}
+{{- $opalPgHost = printf "postgres.%s.svc.%s" $ns.opal $g.clusterDomain -}}
+{{- end -}}
+
+{{- if $opa.policyConfigMap.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opa-policy
+  namespace: {{ $ns.opa }}
+data:
+  policy.rego: |
+{{ .Files.Get "files/policy.rego" | indent 4 }}
+{{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: {{ $ns.opa }}
+  labels:
+    app: opa
+spec:
+  replicas: {{ $opa.replicaCount }}
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      containers:
+        - name: opa
+          image: "{{ $opa.image.repository }}:{{ $opa.image.tag }}"
+          imagePullPolicy: {{ $opa.image.pullPolicy }}
+          args:
+            - "run"
+            - "--server"
+            - "--addr=0.0.0.0:{{ $opa.service.httpPort }}"
+            - "--set=plugins.envoy_ext_authz_grpc.addr=:{{ $opa.service.grpcPort }}"
+            - "--set=plugins.envoy_ext_authz_grpc.path=envoy/authz/decision"
+            - "--set=decision_logs.console=true"
+            - "--ignore=.*"
+            - "/policy/policy.rego"
+          ports:
+            - containerPort: {{ $opa.service.grpcPort }}
+              name: grpc
+            - containerPort: {{ $opa.service.httpPort }}
+              name: http
+{{- if $opa.policyConfigMap.enabled }}
+          volumeMounts:
+            - name: opa-policy
+              mountPath: /policy
+              readOnly: true
+{{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health?plugins
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+{{- with $opa.resources }}
+          resources:
+{{ toYaml . | indent 12 }}
+{{- end }}
+{{- if $opa.policyConfigMap.enabled }}
+      volumes:
+        - name: opa-policy
+          configMap:
+            name: opa-policy
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: {{ $ns.opa }}
+  labels:
+    app: opa
+spec:
+  selector:
+    app: opa
+  ports:
+    - name: grpc
+      port: {{ $opa.service.grpcPort }}
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: kubernetes.io/h2c
+    - name: http
+      port: {{ $opa.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+
+{{- if and $opal.enabled $opal.auth.createSecret (not $opal.auth.existingSecret) }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $opalAuthSecret }}
+  namespace: {{ $ns.opal }}
+type: Opaque
+stringData:
+  OPAL_AUTH_MASTER_TOKEN: {{ $opal.auth.masterToken | quote }}
+  OPAL_CLIENT_TOKEN: {{ $opal.auth.clientToken | quote }}
+{{- end }}
+
+{{- if and $opal.enabled $opal.postgres.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: {{ $ns.opal }}
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ $opal.postgres.image.repository }}:{{ $opal.postgres.image.tag }}"
+          imagePullPolicy: {{ $opal.postgres.image.pullPolicy }}
+          env:
+            - name: POSTGRES_DB
+              value: {{ $opal.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ $opal.postgres.username | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ $opal.postgres.password | quote }}
+          ports:
+            - containerPort: {{ $opal.postgres.port }}
+              name: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: {{ $ns.opal }}
+spec:
+  selector:
+    app: postgres
+  ports:
+    - name: postgres
+      port: {{ $opal.postgres.port }}
+      targetPort: postgres
+{{- end }}
+
+{{- if $opal.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opal-server
+  namespace: {{ $ns.opal }}
+  labels:
+    app: opal-server
+spec:
+  replicas: {{ $opal.server.replicaCount }}
+  selector:
+    matchLabels:
+      app: opal-server
+  template:
+    metadata:
+      labels:
+        app: opal-server
+    spec:
+      containers:
+        - name: opal-server
+          image: "{{ $opal.server.image.repository }}:{{ $opal.server.image.tag }}"
+          imagePullPolicy: {{ $opal.server.image.pullPolicy }}
+          ports:
+            - containerPort: {{ $opal.server.servicePort }}
+              name: http
+          env:
+            - name: OPAL_POLICY_REPO_URL
+              value: {{ $opal.server.policyRepoUrl | quote }}
+            - name: OPAL_BROADCAST_URI
+              value: {{ printf "postgres://%s:%s@%s:%v/%s" $opal.postgres.username $opal.postgres.password $opalPgHost $opal.postgres.port $opal.postgres.database | quote }}
+            - name: OPAL_DATA_CONFIG_SOURCES
+              value: {{ printf "{\"config\":{\"entries\":[{\"url\":\"http://pep-proxy.%s.svc.%s:%v/opal/snapshots/%s\",\"topics\":[\"%s\"],\"dst_path\":\"/%s\",\"save_method\":\"PUT\"}]}}" $ns.proxy $g.clusterDomain $pep.service.port $pep.opal.dataTopic $pep.opal.dataTopic $pep.opal.dataTopic | quote }}
+            - name: OPAL_AUTH_MASTER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $opalAuthSecret }}
+                  key: OPAL_AUTH_MASTER_TOKEN
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opal-server
+  namespace: {{ $ns.opal }}
+spec:
+  selector:
+    app: opal-server
+  ports:
+    - name: http
+      port: {{ $opal.server.servicePort }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opal-client
+  namespace: {{ $ns.opal }}
+  labels:
+    app: opal-client
+spec:
+  replicas: {{ $opal.client.replicaCount }}
+  selector:
+    matchLabels:
+      app: opal-client
+  template:
+    metadata:
+      labels:
+        app: opal-client
+    spec:
+      containers:
+        - name: opal-client
+          image: "{{ $opal.client.image.repository }}:{{ $opal.client.image.tag }}"
+          imagePullPolicy: {{ $opal.client.image.pullPolicy }}
+          env:
+            - name: OPAL_SERVER_URL
+              value: {{ printf "http://opal-server.%s.svc.%s:%v" $ns.opal $g.clusterDomain $opal.server.servicePort | quote }}
+            - name: OPAL_CLIENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $opalAuthSecret }}
+                  key: OPAL_CLIENT_TOKEN
+            - name: OPAL_DATA_TOPICS
+              value: {{ $pep.opal.dataTopic | quote }}
+            - name: OPAL_INLINE_OPA_ENABLED
+              value: "false"
+            - name: POLICY_STORE_URL
+              value: {{ printf "http://opa.%s.svc.%s:%v/v1" $ns.opa $g.clusterDomain $opa.service.httpPort | quote }}
+            - name: OPAL_POLICY_STORE_URL
+              value: {{ printf "http://opa.%s.svc.%s:%v/v1" $ns.opa $g.clusterDomain $opa.service.httpPort | quote }}
+            - name: OPAL_POLICY_REPO_URL
+              value: {{ $opal.server.policyRepoUrl | quote }}
+{{- end }}

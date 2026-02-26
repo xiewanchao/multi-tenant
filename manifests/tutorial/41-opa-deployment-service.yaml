@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opa
+  namespace: opa
+  labels:
+    app: opa
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: opa
+  template:
+    metadata:
+      labels:
+        app: opa
+    spec:
+      containers:
+      - name: opa
+        image: openpolicyagent/opa:0.70.0-envoy
+        args:
+        - "run"
+        - "--server"
+        - "--addr=0.0.0.0:8181"
+        - "--set=plugins.envoy_ext_authz_grpc.addr=:9191"
+        - "--set=plugins.envoy_ext_authz_grpc.path=envoy/authz/decision"
+        - "--set=decision_logs.console=true"
+        - "--ignore=.*"
+        - "/policy/policy.rego"
+        ports:
+        - containerPort: 9191
+          name: grpc
+        - containerPort: 8181
+          name: http
+        volumeMounts:
+        - name: opa-policy
+          mountPath: /policy
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8181
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health?plugins
+            port: 8181
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: opa-policy
+        configMap:
+          name: opa-policy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opa
+  namespace: opa
+  labels:
+    app: opa
+spec:
+  ports:
+  # gRPC 端口：供 AgentGateway ext_authz 使用
+  - port: 9191
+    targetPort: 9191
+    protocol: TCP
+    name: grpc
+    appProtocol: kubernetes.io/h2c
+  # HTTP 端口：供 OPAL Client / PEP Proxy（simulate）访问
+  - port: 8181
+    targetPort: 8181
+    protocol: TCP
+    name: http
+  selector:
+    app: opa
