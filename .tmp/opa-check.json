@@ -1,1 +1,0 @@
-{"oidc_discovery_status": 200, "no_token_admin_status": 401, "token_status": {"superadmin": 200, "alice": 200, "bob": 200}, "superadmin_admin_post_status": 200, "alice_tenant_post_status": 200, "bob_admin_post_status": 403, "bob_apps_get_status": 200, "bob_apps_post_status": 403}
