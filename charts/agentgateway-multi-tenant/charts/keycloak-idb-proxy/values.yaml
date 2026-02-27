@@ -40,6 +40,8 @@ idbProxy:
     keycloakPublicIssuerBaseUrl: ""
     agentgatewayPolicyNamespace: "agentgateway-system"
     agentgatewayPolicyName: "jwt-auth-policy"
+    idbPolicyName: "idb-proxy-jwt-auth-policy"
+    pepPolicyName: "pep-proxy-jwt-auth-policy"
     keycloakService:
       name: "keycloak"
       namespace: "keycloak"
@@ -47,6 +49,13 @@ idbProxy:
     rbac:
       create: false
       serviceAccountName: "idb-proxy"
+  authPolicies:
+    jwt:
+      enabled: true
+      mode: Strict
+      providers: []
+    opa:
+      enabled: true
   resources: {}
   route:
     enabled: true

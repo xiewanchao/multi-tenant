@@ -69,6 +69,13 @@ pepProxy:
       secretName: "pep-proxy-opal-auth"
       key: "OPAL_MASTER_TOKEN"
       value: "THIS_IS_A_DEV_SECRET_CHANGE_ME"
+  authPolicies:
+    jwt:
+      enabled: true
+      mode: Strict
+      providers: []
+    opa:
+      enabled: true
   route:
     enabled: true
     pathPrefix: "/proxy/pep"

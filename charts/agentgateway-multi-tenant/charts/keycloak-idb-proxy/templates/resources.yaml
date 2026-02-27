@@ -215,6 +215,10 @@ spec:
               value: {{ default "keycloak" $jwtAuto.keycloakService.name | quote }}
             - name: AGENTGATEWAY_KEYCLOAK_SERVICE_NAMESPACE
               value: {{ default $ns.keycloak $jwtAuto.keycloakService.namespace | quote }}
+            - name: AGENTGATEWAY_IDB_POLICY_NAME
+              value: {{ default "idb-proxy-jwt-auth-policy" $jwtAuto.idbPolicyName | quote }}
+            - name: AGENTGATEWAY_PEP_POLICY_NAME
+              value: {{ default "pep-proxy-jwt-auth-policy" $jwtAuto.pepPolicyName | quote }}
             - name: AGENTGATEWAY_KEYCLOAK_SERVICE_PORT
               value: {{ default $kc.service.port $jwtAuto.keycloakService.port | quote }}
           readinessProbe:
@@ -292,4 +296,57 @@ spec:
         - name: idb-proxy
           namespace: {{ $ns.proxy }}
           port: {{ $idb.service.port }}
+{{- end }}
+
+{{- $idbAuth := $idb.authPolicies -}}
+{{- if and $idb.route.enabled $idbAuth.jwt.enabled }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ default "idb-proxy-jwt-auth-policy" $jwtAuto.idbPolicyName }}
+  namespace: {{ $ns.agentgateway }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: idb-proxy-route
+  traffic:
+    jwtAuthentication:
+      mode: {{ default "Strict" $idbAuth.jwt.mode }}
+      providers:
+{{- range $idbAuth.jwt.providers }}
+        - issuer: {{ .issuer | quote }}
+          jwks:
+            remote:
+              jwksPath: {{ .jwksPath | quote }}
+              cacheDuration: {{ default "5m" .cacheDuration | quote }}
+              backendRef:
+                group: ""
+                kind: Service
+                name: {{ default "keycloak" $.Values.idbProxy.jwtProviderAutoRegistration.keycloakService.name }}
+                namespace: {{ default $.Values.global.namespaces.keycloak $.Values.idbProxy.jwtProviderAutoRegistration.keycloakService.namespace }}
+                port: {{ default $.Values.keycloak.service.port $.Values.idbProxy.jwtProviderAutoRegistration.keycloakService.port }}
+{{- end }}
+{{- end }}
+
+{{- if and $idb.route.enabled $idbAuth.opa.enabled }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: idb-proxy-opa-ext-auth-policy
+  namespace: {{ $ns.agentgateway }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: idb-proxy-route
+  traffic:
+    extAuth:
+      backendRef:
+        name: opa
+        namespace: {{ $ns.opa }}
+        port: {{ default 9191 $g.opaGrpcPort }}
+      grpc: {}
 {{- end }}

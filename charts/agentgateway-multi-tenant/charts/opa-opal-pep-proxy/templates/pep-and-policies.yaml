@@ -143,6 +143,59 @@ spec:
           port: {{ $pep.service.port }}
 {{- end }}
 
+{{- $pepAuth := $pep.authPolicies -}}
+{{- if and $pep.route.enabled $pepAuth.jwt.enabled }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: pep-proxy-jwt-auth-policy
+  namespace: {{ $ns.agentgateway }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: pep-proxy-route
+  traffic:
+    jwtAuthentication:
+      mode: {{ default "Strict" $pepAuth.jwt.mode }}
+      providers:
+{{- range $pepAuth.jwt.providers }}
+        - issuer: {{ .issuer | quote }}
+          jwks:
+            remote:
+              jwksPath: {{ .jwksPath | quote }}
+              cacheDuration: {{ default "5m" .cacheDuration | quote }}
+              backendRef:
+                group: ""
+                kind: Service
+                name: {{ default "keycloak" $.Values.global.keycloakServiceName }}
+                namespace: {{ default $.Values.global.namespaces.keycloak $.Values.global.keycloakServiceNamespace }}
+                port: {{ default 8080 $.Values.global.keycloakServicePort }}
+{{- end }}
+{{- end }}
+
+{{- if and $pep.route.enabled $pepAuth.opa.enabled }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: pep-proxy-opa-ext-auth-policy
+  namespace: {{ $ns.agentgateway }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: pep-proxy-route
+  traffic:
+    extAuth:
+      backendRef:
+        name: opa
+        namespace: {{ $ns.opa }}
+        port: {{ $opa.service.grpcPort }}
+      grpc: {}
+{{- end }}
+
 {{- if $opa.extAuth.enabled }}
 ---
 apiVersion: gateway.networking.k8s.io/v1beta1

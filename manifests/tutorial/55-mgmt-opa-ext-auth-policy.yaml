@@ -1,0 +1,22 @@
+# Management Plane OPA ext_authz policy
+# Bind one OPA policy to BOTH idb-proxy-route and pep-proxy-route.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: mgmt-opa-ext-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: idb-proxy-route
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: pep-proxy-route
+  traffic:
+    extAuth:
+      backendRef:
+        name: opa
+        namespace: opa
+        port: 9191
+      grpc: {}

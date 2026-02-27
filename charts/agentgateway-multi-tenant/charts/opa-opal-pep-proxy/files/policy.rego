@@ -100,14 +100,6 @@ _groups[group] {
     group != ""
 }
 
-_groups[group] {
-    not _jwt_payload.groups
-    raw := object.get(_jwt_payload, "group", "")
-    raw != ""
-    group := _normalize_group_name(raw)
-    group != ""
-}
-
 _groups_csv := concat(",", sort([group | _groups[group]]))
 
 _normalize_group_name(raw) = out if {
@@ -146,6 +138,31 @@ _is_app_path if {
 }
 
 _admin_resource_types := {"saml", "roles", "groups", "users", "policies"}
+
+# ============================================
+# Management proxy path parsing (rewritten paths)
+# After URLRewrite: /proxy/idb/X → /X, /proxy/pep/X → /X
+# OPA sees paths like /bootstrap/master, /tenants/{id}/groups, etc.
+# ============================================
+
+_is_mgmt_proxy_path if { _path_parts[1] == "bootstrap" }
+_is_mgmt_proxy_path if { _path_parts[1] == "tenants" ; not _is_business_tenant_path }
+_is_mgmt_proxy_path if { _path_parts[1] == "healthz" }
+_is_mgmt_proxy_path if { _path_parts[1] == "audit" }
+_is_mgmt_proxy_path if { _path_parts[1] == "authorize" }
+_is_mgmt_proxy_path if { _path_parts[1] == "simulate" }
+_is_mgmt_proxy_path if { _path_parts[1] == "opal" }
+
+_is_business_tenant_path if {
+    _path_parts[1] == "api"
+    _path_parts[2] == "v1"
+    _path_parts[3] == "tenants"
+}
+
+_mgmt_path_tenant_id := _path_parts[2] if {
+    count(_path_parts) > 2
+    _path_parts[1] == "tenants"
+}
 
 # ============================================
 # Tenant policy package helpers (backward compatible)
@@ -229,6 +246,25 @@ _allow_core if {
     some permission in _static_group_permissions[group]
     permission.method == http_request.method
     glob.match(permission.path_pattern, ["/"], http_request.path)
+}
+
+# ============================================
+# Management proxy auth rules (idb-proxy / pep-proxy)
+# ============================================
+
+# super_admin (master realm) can access ALL management proxy paths
+_allow_core if {
+    _is_mgmt_proxy_path
+    _token_tenant_id == "master"
+    "super_admin" in _roles
+}
+
+# tenant_admin can access their own tenant paths (/tenants/{own_id}/*)
+_allow_core if {
+    _is_mgmt_proxy_path
+    _mgmt_path_tenant_id
+    _mgmt_path_tenant_id == _token_tenant_id
+    "tenant_admin" in _roles
 }
 
 _envoy_dynamic_allow if {

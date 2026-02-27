@@ -28,6 +28,8 @@ ENABLE_JWT_PROVIDER_AUTOREG = os.getenv("ENABLE_JWT_PROVIDER_AUTOREG", "false").
 KEYCLOAK_PUBLIC_ISSUER_BASE_URL = os.getenv("KEYCLOAK_PUBLIC_ISSUER_BASE_URL", "").rstrip("/")
 AGENTGATEWAY_POLICY_NAMESPACE = os.getenv("AGENTGATEWAY_POLICY_NAMESPACE", "agentgateway-system")
 AGENTGATEWAY_POLICY_NAME = os.getenv("AGENTGATEWAY_POLICY_NAME", "jwt-auth-policy")
+AGENTGATEWAY_IDB_POLICY_NAME = os.getenv("AGENTGATEWAY_IDB_POLICY_NAME", "idb-proxy-jwt-auth-policy")
+AGENTGATEWAY_PEP_POLICY_NAME = os.getenv("AGENTGATEWAY_PEP_POLICY_NAME", "pep-proxy-jwt-auth-policy")
 AGENTGATEWAY_KEYCLOAK_SERVICE_NAME = os.getenv("AGENTGATEWAY_KEYCLOAK_SERVICE_NAME", "keycloak")
 AGENTGATEWAY_KEYCLOAK_SERVICE_NAMESPACE = os.getenv("AGENTGATEWAY_KEYCLOAK_SERVICE_NAMESPACE", "keycloak")
 AGENTGATEWAY_KEYCLOAK_SERVICE_PORT = int(os.getenv("AGENTGATEWAY_KEYCLOAK_SERVICE_PORT", "8080"))
@@ -231,7 +233,6 @@ class TenantUser(BaseModel):
     email: Optional[str] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    group: str = "users"
     groups: list[str] = Field(default_factory=list)
     roles: list[str] = Field(default_factory=list)
 
@@ -562,7 +563,6 @@ class KeycloakClient:
             "firstName": first_name,
             "lastName": last_name,
             "requiredActions": [],
-            "attributes": {"group": [user.group]},
         }
         if existing is None:
             self.request("POST", f"/admin/realms/{realm}/users", json=payload, expected=(201, 409))
@@ -755,10 +755,7 @@ class KeycloakClient:
 
     @staticmethod
     def effective_user_group_names(user: TenantUser) -> list[str]:
-        names = [g for g in (user.groups or []) if g]
-        if user.group and user.group not in names:
-            names.insert(0, user.group)
-        return names
+        return [g for g in (user.groups or []) if g]
 
 
 kc = KeycloakClient()
@@ -808,13 +805,9 @@ class AgentGatewayPolicySyncClient:
             )
         return resp
 
-    def ensure_jwt_provider(self, tenant_id: str, *, issuer_base_url: str | None = None) -> dict[str, Any]:
-        if not self.enabled:
-            return {"status": "disabled", "tenant_id": tenant_id}
-        base = (issuer_base_url or KEYCLOAK_PUBLIC_ISSUER_BASE_URL or KEYCLOAK_URL).rstrip("/")
-        issuer = f"{base}/realms/{tenant_id}"
-        jwks_path = f"/realms/{tenant_id}/protocol/openid-connect/certs"
-        path = f"/apis/agentgateway.dev/v1alpha1/namespaces/{AGENTGATEWAY_POLICY_NAMESPACE}/agentgatewaypolicies/{AGENTGATEWAY_POLICY_NAME}"
+    def _upsert_provider_in_policy(self, policy_name: str, new_provider: dict[str, Any]) -> str:
+        """Add or update a JWT provider in an AgentgatewayPolicy. Returns status string."""
+        path = f"/apis/agentgateway.dev/v1alpha1/namespaces/{AGENTGATEWAY_POLICY_NAMESPACE}/agentgatewaypolicies/{policy_name}"
         resource = self._request("GET", path, expected=(200,)).json()
         providers = (
             resource.get("spec", {})
@@ -823,27 +816,11 @@ class AgentGatewayPolicySyncClient:
             .get("providers", [])
         )
         if not isinstance(providers, list):
-            raise HTTPException(status_code=500, detail="AgentgatewayPolicy jwt providers is not a list")
-        new_provider = {
-            "issuer": issuer,
-            "jwks": {
-                "remote": {
-                    "jwksPath": jwks_path,
-                    "cacheDuration": "5m",
-                    "backendRef": {
-                        "group": "",
-                        "kind": "Service",
-                        "name": AGENTGATEWAY_KEYCLOAK_SERVICE_NAME,
-                        "namespace": AGENTGATEWAY_KEYCLOAK_SERVICE_NAMESPACE,
-                        "port": AGENTGATEWAY_KEYCLOAK_SERVICE_PORT,
-                    },
-                }
-            },
-        }
+            raise HTTPException(status_code=500, detail=f"AgentgatewayPolicy {policy_name} jwt providers is not a list")
         changed = False
         status = "created"
         for i, provider in enumerate(providers):
-            if provider.get("issuer") == issuer:
+            if provider.get("issuer") == new_provider["issuer"]:
                 if provider != new_provider:
                     providers[i] = new_provider
                     changed = True
@@ -860,7 +837,46 @@ class AgentGatewayPolicySyncClient:
             if isinstance(resource.get("metadata"), dict):
                 resource["metadata"].pop("managedFields", None)
             self._request("PUT", path, expected=(200,), json_body=resource)
-        return {"status": status, "tenant_id": tenant_id, "issuer": issuer, "jwks_path": jwks_path}
+        return status
+
+    def ensure_jwt_provider(self, tenant_id: str, *, issuer_base_url: str | None = None) -> dict[str, Any]:
+        if not self.enabled:
+            return {"status": "disabled", "tenant_id": tenant_id}
+        base = (issuer_base_url or KEYCLOAK_PUBLIC_ISSUER_BASE_URL or KEYCLOAK_URL).rstrip("/")
+        issuer = f"{base}/realms/{tenant_id}"
+        jwks_path = f"/realms/{tenant_id}/protocol/openid-connect/certs"
+        new_provider = {
+            "issuer": issuer,
+            "jwks": {
+                "remote": {
+                    "jwksPath": jwks_path,
+                    "cacheDuration": "5m",
+                    "backendRef": {
+                        "group": "",
+                        "kind": "Service",
+                        "name": AGENTGATEWAY_KEYCLOAK_SERVICE_NAME,
+                        "namespace": AGENTGATEWAY_KEYCLOAK_SERVICE_NAMESPACE,
+                        "port": AGENTGATEWAY_KEYCLOAK_SERVICE_PORT,
+                    },
+                }
+            },
+        }
+        # Update business JWT policy
+        status = self._upsert_provider_in_policy(AGENTGATEWAY_POLICY_NAME, new_provider)
+        # Sync the same provider to idb-proxy and pep-proxy JWT policies (skip if not deployed)
+        mgmt_sync: dict[str, str] = {}
+        for name in (AGENTGATEWAY_IDB_POLICY_NAME, AGENTGATEWAY_PEP_POLICY_NAME):
+            try:
+                mgmt_sync[name] = self._upsert_provider_in_policy(name, new_provider)
+            except HTTPException:
+                mgmt_sync[name] = "skipped"
+        return {
+            "status": status,
+            "tenant_id": tenant_id,
+            "issuer": issuer,
+            "jwks_path": jwks_path,
+            "mgmt_policies": mgmt_sync,
+        }
 
 
 agw_sync = AgentGatewayPolicySyncClient()
@@ -1050,25 +1066,6 @@ def ensure_default_mappers(realm: str, client_uuid: str, tenant_id_value: str) -
             },
         },
     )
-    kc.upsert_mapper(
-        realm,
-        client_uuid,
-        "group",
-        {
-            "name": "group",
-            "protocol": "openid-connect",
-            "protocolMapper": "oidc-usermodel-attribute-mapper",
-            "config": {
-                "claim.name": "group",
-                "jsonType.label": "String",
-                "user.attribute": "group",
-                "multivalued": "false",
-                "id.token.claim": "true",
-                "access.token.claim": "true",
-                "userinfo.token.claim": "true",
-            },
-        },
-    )
 
 
 @app.get("/healthz")
@@ -1107,14 +1104,12 @@ def bootstrap_master(payload: MasterBootstrapRequest, request: Request) -> dict[
     client_uuid, client_secret = kc.ensure_client(realm, payload.client_id)
     ensure_default_mappers(realm, client_uuid, "master")
     kc.ensure_role(realm, "super_admin")
-    kc.ensure_user_profile_attribute(realm, "group")
     kc.ensure_group(realm, "admin")
 
     user_model = TenantUser(
         username=payload.super_admin_username,
         password=payload.super_admin_password,
         email=payload.super_admin_email,
-        group="admin",
         groups=["admin"],
         roles=["super_admin"],
     )
@@ -1151,7 +1146,6 @@ def bootstrap_tenant(tenant_id: str, payload: TenantBootstrapRequest, request: R
     kc.ensure_realm(tenant_id, payload.display_name)
     client_uuid, client_secret = kc.ensure_client(tenant_id, payload.client_id)
     ensure_default_mappers(tenant_id, client_uuid, tenant_id)
-    kc.ensure_user_profile_attribute(tenant_id, "group")
     kc.ensure_group(tenant_id, "admin")
     kc.ensure_group(tenant_id, "users")
 
@@ -1266,7 +1260,6 @@ def create_user(tenant_id: str, payload: UserCreateRequest, request: Request) ->
             email=payload.email,
             first_name=payload.first_name,
             last_name=payload.last_name,
-            group=payload.group,
             groups=payload.groups,
             roles=[],
         ),
@@ -1392,16 +1385,6 @@ def update_user_groups(tenant_id: str, username: str, payload: UserGroupMembersh
         raise HTTPException(status_code=404, detail=f"User not found: {username}")
     group_ids = _resolve_group_ids(tenant_id, payload)
     groups = kc.set_user_groups(tenant_id, user["id"], group_ids, mode=payload.mode)
-    user_doc = kc.get_user_by_id(tenant_id, user["id"])
-    attrs = dict(user_doc.get("attributes") or {})
-    if groups:
-        first_name = (groups[0].get("name") or "").strip() or (groups[0].get("path") or "").split("/")[-1]
-        if first_name:
-            attrs["group"] = [first_name]
-    else:
-        attrs.pop("group", None)
-    user_doc["attributes"] = attrs
-    kc.request("PUT", f"/admin/realms/{tenant_id}/users/{user['id']}", json=user_doc, expected=(204,))
     result = {
         "tenant_id": tenant_id,
         "user_id": user["id"],
