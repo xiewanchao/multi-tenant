@@ -145,6 +145,7 @@ _admin_resource_types := {"saml", "roles", "groups", "users", "policies"}
 # OPA sees paths like /bootstrap/master, /tenants/{id}/groups, etc.
 # ============================================
 
+# Mode A: path already rewritten by route filter (expected form: /tenants/{id}/...)
 _is_mgmt_proxy_path if { _path_parts[1] == "bootstrap" }
 _is_mgmt_proxy_path if { _path_parts[1] == "tenants" ; not _is_business_tenant_path }
 _is_mgmt_proxy_path if { _path_parts[1] == "healthz" }
@@ -152,6 +153,43 @@ _is_mgmt_proxy_path if { _path_parts[1] == "audit" }
 _is_mgmt_proxy_path if { _path_parts[1] == "authorize" }
 _is_mgmt_proxy_path if { _path_parts[1] == "simulate" }
 _is_mgmt_proxy_path if { _path_parts[1] == "opal" }
+
+# Mode B: ext_authz sees original route path before URLRewrite (e.g. /proxy/idb/tenants/{id}/...)
+_is_mgmt_proxy_path if {
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "bootstrap"
+}
+_is_mgmt_proxy_path if {
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "tenants"
+}
+_is_mgmt_proxy_path if {
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "healthz"
+}
+_is_mgmt_proxy_path if {
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "audit"
+}
+_is_mgmt_proxy_path if {
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "authorize"
+}
+_is_mgmt_proxy_path if {
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "simulate"
+}
+_is_mgmt_proxy_path if {
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "opal"
+}
 
 _is_business_tenant_path if {
     _path_parts[1] == "api"
@@ -162,6 +200,13 @@ _is_business_tenant_path if {
 _mgmt_path_tenant_id := _path_parts[2] if {
     count(_path_parts) > 2
     _path_parts[1] == "tenants"
+}
+
+_mgmt_path_tenant_id := _path_parts[4] if {
+    count(_path_parts) > 4
+    _path_parts[1] == "proxy"
+    _path_parts[2] in {"idb", "pep"}
+    _path_parts[3] == "tenants"
 }
 
 # ============================================
@@ -380,6 +425,9 @@ _app_policy_rules := [] if {
 _app_request_kind := lower(object.get(_app_request, "resource_kind", "api"))
 _app_request_action := lower(object.get(_app_request, "action", ""))
 _app_request_resource := object.get(_app_request, "resource", "")
+
+default _app_allow := false
+default _app_deny := false
 
 _app_allow if {
     not _app_deny
