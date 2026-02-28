@@ -159,24 +159,24 @@ Helm 部署详见 [`docs/helm-umbrella-deploy.md`](docs/helm-umbrella-deploy.md)
 | 第二部分 | Keycloak + IDB Proxy（身份配置面） | 通过 `/proxy/idb/*` 完成 Keycloak 初始化 |
 | 第三部分 | Keycloak OIDC 路由 + JWT 策略 | 无 token → 401，有 token → 200 |
 | 第四部分 | OPA 策略引擎 + ext_authz | 正确角色 → 200，错误角色 → 403 |
-| 第五·五部分 | 启用管理面 JWT + OPA 策略 | 管理面接口也需要 token 和正确角色 |
-| 第五部分 | 端到端完整测试 | 10 个场景全面覆盖 |
-| 第六部分 | 动态策略管理（PEP Proxy + OPAL） | 运行时推送策略，OPA 实时生效 |
-| 第七部分 | 添加更多租户 | 多租户隔离验证 |
-| 第八部分 | 调试与运维 | 日志、排障、token 管理 |
-| 第九部分 | 清理资源 | 完整卸载 |
+| 第五部分 | 启用管理面 JWT + OPA 策略 | 管理面接口也需要 token 和正确角色 |
+| 第六部分 | 端到端完整测试 | 10 个场景全面覆盖 |
+| 第七部分 | 动态策略管理（PEP Proxy + OPAL） | 运行时推送策略，OPA 实时生效 |
+| 第八部分 | 添加更多租户 | 多租户隔离验证 |
+| 第九部分 | 调试与运维 | 日志、排障、token 管理 |
+| 第十三部分 | 清理资源 | 完整卸载 |
 | 第十部分 | 扩展功能（SAML / Groups / DB Authorize / Audit） | 高级能力验证 |
 | 第十一部分 | Sidecar OPA + OPAL 到 AgentGateway（可选） | 低延迟 ext_authz |
 | 第十二部分 | OPA Rego 动态更新验证（可选） | 无重启更新 Rego 策略 |
 
 **建议阅读顺序**：
 
-1. 核心主线（必做）：第一部分 → 第二部分 → 第三部分 → 第四部分 → 第五·五部分 → 第五部分
-2. 管理面加固（强烈建议）：第五·五部分（先于完整测试执行）
-3. 常用排障（强烈建议）：第八部分《调试与运维》
-4. 可选扩展：第六部分《动态策略管理》→ 第七部分《添加更多租户》→ 第十部分《扩展功能》
+1. 核心主线（必做）：第一部分 → 第二部分 → 第三部分 → 第四部分 → 第五部分 → 第六部分
+2. 管理面加固（强烈建议）：第五部分（先于完整测试执行）
+3. 常用排障（强烈建议）：第九部分《调试与运维》
+4. 可选扩展：第七部分《动态策略管理》→ 第八部分《添加更多租户》→ 第十部分《扩展功能》
 5. 高级选项：第十一部分《Sidecar OPA》→ 第十二部分《动态 Rego》
-6. 清理资源：第九部分
+6. 清理资源：第十三部分
 
 > **核心主线成功标准**：
 > - 无 token 访问业务 API → `401`
@@ -240,7 +240,7 @@ kubectl get gateway -n agentgateway-system
 
 > **目标**：先搭建最基本的 Gateway → httpbin 通路，确认流量可以正常转发。此时没有任何认证和授权，所有请求都应该返回 200 OK。
 
-## 第 1 步：部署 httpbin 模拟后端
+## 1.1 部署 httpbin 模拟后端
 
 httpbin 用于模拟业务 App Service。在后续步骤中，我们会逐步在路由上叠加 JWT 认证和 OPA 授权。
 
@@ -250,7 +250,7 @@ kubectl apply -f https://raw.githubusercontent.com/kgateway-dev/kgateway/refs/he
 kubectl -n httpbin rollout status deploy/httpbin
 ```
 
-## 第 2 步：创建业务路由
+## 1.2 创建业务路由
 
 创建两条 HTTPRoute，将业务 API 路由到 httpbin。所有 HTTPRoute 统一放在 `agentgateway-system` namespace，通过 ReferenceGrant 跨 namespace 引用 httpbin Service。
 
@@ -267,7 +267,7 @@ kubectl get httproute -n agentgateway-system
 kubectl get referencegrant -n httpbin
 ```
 
-## 第 3 步：验证基线 — 裸流量通路
+## 1.3 验证基线 — 裸流量通路
 
 启动 port-forward 并测试：
 
@@ -299,9 +299,9 @@ curl -s http://127.0.0.1:8080/api/v1/tenants/acme/roles \
 
 # 第二部分：部署 Keycloak + IDB Proxy（身份配置面）
 
-## 第 4 步：部署 Keycloak
+## 2.1 部署 Keycloak
 
-### 4.1 创建 namespace 并部署
+### 2.1.1 创建 namespace 并部署
 
 ```bash
 kubectl create namespace keycloak
@@ -311,7 +311,7 @@ kubectl -n keycloak apply -f https://raw.githubusercontent.com/solo-io/gloo-mesh
 kubectl -n keycloak rollout status deploy/keycloak
 ```
 
-### 4.2 获取 Keycloak 访问地址
+### 2.1.2 获取 Keycloak 访问地址
 
 Keycloak 将通过 Gateway 对外暴露（免认证专区路由将在第 8 步配置），但在 Keycloak 初始配置阶段，我们先使用 port-forward 直连：
 
@@ -334,7 +334,7 @@ export KEYCLOAK_URL=http://${ENDPOINT_KEYCLOAK}
 echo "Keycloak URL: $KEYCLOAK_URL"
 ```
 
-### 4.3 获取 master realm admin token
+### 2.1.3 获取 master realm admin token
 
 ```bash
 export KEYCLOAK_TOKEN=$(curl -s \
@@ -352,7 +352,7 @@ echo "Admin token: ${KEYCLOAK_TOKEN:0:20}..."
 
 ---
 
-## 第 5 步：部署 IDB Proxy（FastAPI 身份配置面）
+## 2.2 部署 IDB Proxy（FastAPI 身份配置面）
 
 为避免直接使用大量 `curl` 调 Keycloak Admin API 与 OPAL/OPA 接口，本教程将配置动作下沉到两个独立 FastAPI 服务：
 
@@ -361,7 +361,7 @@ echo "Admin token: ${KEYCLOAK_TOKEN:0:20}..."
 
 > **Keycloak 24+ 兼容性说明**：Keycloak 24 及以上版本默认启用"声明式用户配置文件"（Declarative User Profile），未在 User Profile 中注册的自定义用户属性会在创建/更新用户时被静默忽略。IDB Proxy 的 bootstrap 流程已自动处理此问题 —— 在创建用户之前，会先通过 Keycloak Admin API 将 `group` 属性注册到目标 realm 的 User Profile 配置中，确保 `group` 属性能正确保存并映射到 JWT claims。
 
-### 5.1 部署 IDB Proxy 服务
+### 2.2.1 部署 IDB Proxy 服务
 
 > 下方镜像请替换为你的 FastAPI 实现镜像。生产环境建议将 admin 凭据放入 Secret，这里为教程演示简化配置。
 
@@ -371,7 +371,7 @@ kubectl create namespace proxy-system --dry-run=client -o yaml | kubectl apply -
 kubectl apply -f manifests/tutorial/20-idb-proxy-deployment.yaml
 ```
 
-### 5.2 将 IDB Proxy 接入 Gateway
+### 2.2.2 将 IDB Proxy 接入 Gateway
 
 ```bash
 kubectl apply -f manifests/tutorial/21-idb-proxy-gateway-routes.yaml
@@ -380,9 +380,9 @@ kubectl get deploy,svc -n proxy-system
 kubectl get httproute -n agentgateway-system
 ```
 
-> 说明：本教程将 `idb-proxy-route` 作为身份配置面入口，默认不绑定 JWT/OPA，便于首轮 bootstrap。`pep-proxy` 将在 OPA 部分部署并接入 Gateway。生产环境应至少配合内网访问控制（NetworkPolicy / mTLS / IP allowlist），并在初始化完成后按需纳入鉴权策略（见第五·五部分）。
+> 说明：本教程将 `idb-proxy-route` 作为身份配置面入口，默认不绑定 JWT/OPA，便于首轮 bootstrap。`pep-proxy` 将在 OPA 部分部署并接入 Gateway。生产环境应至少配合内网访问控制（NetworkPolicy / mTLS / IP allowlist），并在初始化完成后按需纳入鉴权策略（见第五部分）。
 
-### 5.3 通过 IDB Proxy 初始化 master realm（超级管理员）
+### 2.2.3 通过 IDB Proxy 初始化 master realm（超级管理员）
 
 > 如果之前 `kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80` 已停止，请先重新启动。
 
@@ -417,11 +417,11 @@ export MASTER_CLIENT_UUID=$(echo "$MASTER_BOOTSTRAP" | jq -r '.client_uuid')
 
 ---
 
-## 第 6 步：通过 IDB Proxy 创建租户 Realm（以 acme 为例）
+## 2.3 通过 IDB Proxy 创建租户 Realm（以 acme 为例）
 
 每个租户对应一个独立 Keycloak realm。这里通过 IDB Proxy 一次性完成 realm、client、claims mapper、角色、用户初始化。
 
-### 6.1 创建 acme 租户
+### 2.3.1 创建 acme 租户
 
 ```bash
 export TENANT_ID="acme"
@@ -465,7 +465,7 @@ export ACME_CLIENT_UUID=$(echo "$TENANT_BOOTSTRAP" | jq -r '.client_uuid')
 
 `TENANT_BOOTSTRAP` 建议至少返回：`tenant_id`、`client_id`、`client_secret`、`client_uuid`，便于后续 JWT 测试直接复用。
 
-### 6.2 验证 Keycloak 配置
+### 2.3.2 验证 Keycloak 配置
 
 ```bash
 echo "========================================="
@@ -490,7 +490,7 @@ echo "  [${TENANT_ID}] charlie / password    → role: viewer"
 
 > **目标**：为业务路由叠加 JWT 认证层。完成后，无 token 的请求会被拦截返回 401，有效 token 的请求正常通过。Keycloak 的 OIDC 端点作为"免认证专区"不受影响。
 
-## 第 7 步：获取 JWKS 信息
+## 3.1 获取 JWKS 信息
 
 > **Issuer 一致性说明**：JWT policy 中的 `issuer` 必须和 token 中的 `iss` 字段完全匹配。Keycloak 会根据请求的 `Host` 头来填写 `iss`。如果 token 是通过 Gateway（Host: www.example.com）获取的，issuer 就是 `http://www.example.com/realms/<realm>`；如果通过 port-forward 直连，issuer 是 `http://localhost:9080/realms/<realm>`。**本教程使用 Gateway URL 作为统一 issuer**，因此后续测试脚本也统一通过 Gateway 获取 token。
 
@@ -520,9 +520,9 @@ curl -s $KEYCLOAK_URL$ACME_JWKS_PATH | jq '.keys[0].kid'
 
 两者应返回不同的 key ID（每个 realm 有独立的密钥对）。
 
-## 第 8 步：配置 Keycloak 免认证路由 & 多 Provider JWT 认证策略
+## 3.2 配置 Keycloak 免认证路由 & 多 Provider JWT 认证策略
 
-### 8.1 创建 Keycloak 免认证路由（跨 namespace 引用）
+### 3.2.1 创建 Keycloak 免认证路由（跨 namespace 引用）
 
 Keycloak 部署在 `keycloak` namespace，而所有 HTTPRoute 统一放在 `agentgateway-system`（与 Policy 同 namespace）。需要创建 ReferenceGrant 允许跨 namespace 引用后端 Service：
 
@@ -539,7 +539,7 @@ kubectl get httproute keycloak-oidc-route -n agentgateway-system
 kubectl get referencegrant -n keycloak
 ```
 
-### 8.2 创建多 Provider JWT 认证策略（绑定到业务路由）
+### 3.2.2 创建多 Provider JWT 认证策略（绑定到业务路由）
 
 > **关键变更**：JWT 策略的 `targetRefs` 指向具体的业务 HTTPRoute（`admin-api-route` 和 `tenant-api-route`），而不是 Gateway 整体。这样 Keycloak 的免认证路由不受影响。
 
@@ -562,11 +562,11 @@ envsubst < manifests/tutorial/31-jwt-auth-policy.template.yaml | kubectl apply -
 kubectl get AgentgatewayPolicy jwt-auth-policy -n agentgateway-system -o json | jq '.status'
 ```
 
-## 第 9 步：验证 JWT 认证
+## 3.3 验证 JWT 认证
 
 > **此时的行为变化**：在第一部分，业务 API 没有任何认证，所有请求都返回 200。现在 JWT 策略已绑定到业务路由，未携带有效 token 的请求会被拦截返回 401。
 
-### 9.1 验证 Keycloak 免认证路由
+### 3.3.1 验证 Keycloak 免认证路由
 
 先确认 Keycloak 的 OIDC 端点可通过 Gateway 无 token 访问（免认证专区）：
 
@@ -586,7 +586,7 @@ curl -i http://127.0.0.1:8080/realms/master/protocol/openid-connect/certs \
 
 > 以上两个请求走的是 `keycloak-oidc-route`，该路由未绑定任何 JWT/OPA 策略，因此无需 token 即可通过。
 
-### 9.2 验证业务 API 已需要 token → 401
+### 3.3.2 验证业务 API 已需要 token → 401
 
 ```bash
 # 同样的请求，第一部分返回 200，现在应该返回 401
@@ -598,7 +598,7 @@ curl -i http://127.0.0.1:8080/api/v1/admin/tenants -H "host: www.example.com"
 
 > 对比第一部分的基线测试：同样的请求从 200 变成了 401，说明 JWT 策略已生效。
 
-### 9.3 获取各用户 token 并验证
+### 3.3.3 获取各用户 token 并验证
 
 > **通过 Gateway 获取 token**：如果 Keycloak 免认证路由已配置，也可以通过 Gateway 地址获取 token（将 `$KEYCLOAK_URL` 替换为 `http://127.0.0.1:8080`，并添加 host header）。这里继续使用直连地址以保持配置阶段的简洁性。
 
@@ -643,7 +643,7 @@ echo "Bob token: ${ACCESS_TOKEN_BOB:0:20}..."
 
 > 可以用 https://jwt.io 解码 token，确认包含 `tenant_id`、`roles` 等 claims。
 
-### 9.4 验证 token 中的 claims
+### 3.3.4 验证 token 中的 claims
 
 ```bash
 # 解码 Alice 的 token（查看 payload 部分）
@@ -661,7 +661,7 @@ echo $ACCESS_TOKEN_ALICE | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{tenant_i
 }
 ```
 
-### 9.5 带 token 访问业务 API → 200
+### 3.3.5 带 token 访问业务 API → 200
 
 ```bash
 # 超级管理员访问管理 API → 200 ✅
@@ -701,7 +701,7 @@ curl -i -X POST http://127.0.0.1:8080/api/v1/admin/tenants \
 
 > **目标**：为业务路由叠加 OPA 授权层。完成后，即使 token 有效，没有正确角色的请求也会被拦截返回 403。
 
-## 第 10 步：编写多租户 OPA 策略
+## 4.1 编写多租户 OPA 策略
 
 此策略实现了设计文档中的完整授权模型：超级管理员、租户管理员、普通用户三级 RBAC，加上动态策略数据驱动的业务鉴权。
 
@@ -730,7 +730,7 @@ kubectl apply -f manifests/tutorial/40-opa-policy-configmap.yaml
 
 ---
 
-## 第 11 步：部署 OPA 服务
+## 4.2 部署 OPA 服务
 
 ```bash
 kubectl apply -f manifests/tutorial/41-opa-deployment-service.yaml
@@ -743,7 +743,7 @@ kubectl get pods -n opa -l app=opa
 kubectl get svc -n opa opa
 ```
 
-### 11.1 部署 OPAL（实时策略同步：PEP Proxy → OPAL → OPA）
+### 4.2.1 部署 OPAL（实时策略同步：PEP Proxy → OPAL → OPA）
 
 > 本教程使用 `OPAL Server + OPAL Client` 做"数据变更发布与实时分发"。`PEP Proxy` 不再直接写 OPA Data API，而是调用 OPAL `/data/config`；再由 `OPAL Client` 将更新同步到 OPA。
 
@@ -765,9 +765,9 @@ kubectl get svc -n opal opal-server
 
 ---
 
-## 第 12 步：配置跨 namespace 引用和 OPA 外部授权策略
+## 4.3 配置跨 namespace 引用和 OPA 外部授权策略
 
-### 12.0 部署 PEP Proxy（放在 OPA + OPAL 部分，确保可直接 Ready）
+### 4.3.1 部署 PEP Proxy（放在 OPA + OPAL 部分，确保可直接 Ready）
 
 `pep-proxy` 的 `/healthz` 会访问 OPA `/health`，在 OPAL 模式下还会检查 OPAL Server `/healthcheck`。因此把 `pep-proxy` 放在 OPA + OPAL 部分部署，避免依赖未就绪导致 `pep-proxy` readiness/liveness 失败。
 
@@ -777,19 +777,19 @@ kubectl apply -f manifests/tutorial/50-pep-proxy-deployment.yaml
 kubectl -n proxy-system rollout status deploy/pep-proxy
 ```
 
-### 12.0.1 将 PEP Proxy 接入 Gateway
+### 4.3.2 将 PEP Proxy 接入 Gateway
 
 ```bash
 kubectl apply -f manifests/tutorial/51-pep-proxy-gateway-routes.yaml
 ```
 
-### 12.1 创建 ReferenceGrant
+### 4.3.3 创建 ReferenceGrant
 
 ```bash
 kubectl apply -f manifests/tutorial/52-opa-referencegrant.yaml
 ```
 
-### 12.2 创建 OPA 外部授权策略（绑定到业务路由）
+### 4.3.4 创建 OPA 外部授权策略（绑定到业务路由）
 
 > **关键变更**：与 JWT 策略一致，OPA 授权策略也绑定到具体的业务 HTTPRoute，确保 Keycloak 免认证路由不受 OPA 鉴权影响。
 
@@ -827,9 +827,9 @@ idb-proxy-route       ["www.example.com"]   Xs
 pep-proxy-route       ["www.example.com"]   Xs
 ```
 
-> ⚠️ **重要**：此时业务面的 JWT + OPA 策略已启用，但管理面的 JWT + OPA 策略尚未应用。管理面接口（`/proxy/idb/*`、`/proxy/pep/*`）仍可无 token 访问。这是故意的 —— 等完成端到端验证后，在第五·五部分再启用管理面策略。
+> ⚠️ **重要**：此时业务面的 JWT + OPA 策略已启用，但管理面的 JWT + OPA 策略尚未应用。管理面接口（`/proxy/idb/*`、`/proxy/pep/*`）仍可无 token 访问。这是故意的 —— 等完成端到端验证后，在第五部分再启用管理面策略。
 
-## 第 13 步：验证 OPA 授权
+## 4.4 验证 OPA 授权
 
 > **此时的行为变化**：第三部分中，Bob 拿着有效 token 可以 POST 管理 API（200）。现在 OPA 授权层已叠加，只有正确角色的用户才能通过。
 
@@ -863,7 +863,7 @@ ACCESS_TOKEN_BOB=$(curl -s -X POST \
   -d "password=password" | jq -r '.access_token')
 ```
 
-### 13.1 超级管理员创建租户 → 200 ✅
+### 4.4.1 超级管理员创建租户 → 200 ✅
 
 ```bash
 echo "=== SuperAdmin POST /admin/tenants → 200 ==="
@@ -876,7 +876,7 @@ curl -i -X POST http://127.0.0.1:8080/api/v1/admin/tenants \
 
 预期：`HTTP/1.1 200 OK`
 
-### 13.2 普通用户访问管理 API → 403 ❌
+### 4.4.2 普通用户访问管理 API → 403 ❌
 
 ```bash
 echo "=== Bob POST /admin/tenants → 403 (OPA enforced) ==="
@@ -891,7 +891,7 @@ curl -i -X POST http://127.0.0.1:8080/api/v1/admin/tenants \
 
 > 对比第三部分：同样的请求（Bob + 有效 token + POST /admin/tenants）从 200 变成了 403，说明 OPA 授权层已生效。
 
-### 13.3 租户管理员管理本租户 → 200 ✅
+### 4.4.3 租户管理员管理本租户 → 200 ✅
 
 ```bash
 echo "=== Alice POST /tenants/acme/roles → 200 ==="
@@ -904,7 +904,7 @@ curl -i -X POST http://127.0.0.1:8080/api/v1/tenants/acme/roles \
 
 预期：`HTTP/1.1 200 OK`（Alice 是 acme 的 tenant_admin）
 
-### 13.4 跨租户访问 → 403 ❌
+### 4.4.4 跨租户访问 → 403 ❌
 
 ```bash
 echo "=== Alice GET /tenants/other-corp/roles → 403 (cross-tenant) ==="
@@ -917,7 +917,7 @@ curl -i http://127.0.0.1:8080/api/v1/tenants/other-corp/roles \
 
 > ✅ **检查点**：双层安全模型完整工作。无 token → 401（JWT），有 token 但角色不对 → 403（OPA），token 有效且角色正确 → 200。
 
-### 行为变化总结
+### 4.4.5 行为变化总结
 
 | 请求场景 | 第一部分（无安全层） | 第三部分（仅 JWT） | 第四部分（JWT + OPA） |
 |---|---|---|---|
@@ -928,15 +928,15 @@ curl -i http://127.0.0.1:8080/api/v1/tenants/other-corp/roles \
 
 ---
 
-# 第五·五部分：启用管理面 JWT + OPA 策略（初始化后）
+# 第五部分：启用管理面 JWT + OPA 策略（初始化后）
 
 > **目标**：为管理面接口（`/proxy/idb/*`、`/proxy/pep/*`）启用独立的 JWT 认证和 OPA 授权策略。此前这些接口无需 token 即可访问，是为了方便初始化（bootstrap）阶段操作。现在 Keycloak 已配置完成，可以安全地启用管理面策略。
 
 > ⚠️ **重要前提**：确保第 5.3 步（master realm 初始化）和第 6 步（租户 realm 初始化）已完成。如果管理面策略在 bootstrap 之前启用，bootstrap 请求会被 JWT 策略拦截返回 `401`。
 
-## 第 14.5 步：部署管理面策略
+## 5.1 部署管理面策略
 
-### 14.5.1 部署管理面 JWT 策略
+### 5.1.1 部署管理面 JWT 策略
 
 管理面 JWT 策略是独立的 `AgentgatewayPolicy`，其 `targetRefs` 绑定到 `idb-proxy-route` 和 `pep-proxy-route`，与业务面的 `jwt-auth-policy` 分离。
 
@@ -945,7 +945,7 @@ curl -i http://127.0.0.1:8080/api/v1/tenants/other-corp/roles \
 envsubst < manifests/tutorial/54-mgmt-jwt-auth-policy.template.yaml | kubectl apply -f -
 ```
 
-### 14.5.2 部署管理面 OPA 策略
+### 5.1.2 部署管理面 OPA 策略
 
 管理面 OPA 策略绑定到同样的管理面路由，使用独立的 ext_authz 规则：
 
@@ -953,7 +953,7 @@ envsubst < manifests/tutorial/54-mgmt-jwt-auth-policy.template.yaml | kubectl ap
 kubectl apply -f manifests/tutorial/55-mgmt-opa-ext-auth-policy.yaml
 ```
 
-### 14.5.3 验证管理面策略已生效
+### 5.1.3 验证管理面策略已生效
 
 ```bash
 # 查看所有策略
@@ -970,7 +970,7 @@ mgmt-jwt-auth-policy       Xs    ← 管理面 JWT
 mgmt-opa-ext-auth-policy   Xs    ← 管理面 OPA
 ```
 
-### 14.5.4 验证管理面接口已需要 token
+### 5.1.4 验证管理面接口已需要 token
 
 ```bash
 # 管理面无 token → 401（之前返回 200）
@@ -1007,9 +1007,9 @@ curl -i -X POST http://127.0.0.1:8080/proxy/idb/tenants/acme/bootstrap \
 
 ---
 
-# 第五部分：端到端完整验证
+# 第六部分：端到端完整验证
 
-## 第 14 步：完整测试场景
+## 6.1 完整测试场景
 
 确保 port-forward 仍在运行：
 
@@ -1017,7 +1017,7 @@ curl -i -X POST http://127.0.0.1:8080/proxy/idb/tenants/acme/bootstrap \
 kubectl port-forward deployment/agentgateway-proxy -n agentgateway-system 8080:80 &
 ```
 
-### 14.1 重新获取 tokens（防止过期）
+### 6.1.1 重新获取 tokens（防止过期）
 
 ```bash
 ACCESS_TOKEN_SUPERADMIN=$(curl -s -X POST \
@@ -1048,7 +1048,7 @@ ACCESS_TOKEN_BOB=$(curl -s -X POST \
   -d "password=password" | jq -r '.access_token')
 ```
 
-### 14.2 ~ 14.12 一键执行完整测试并汇总结果
+### 6.1.2 一键执行完整测试并汇总结果
 
 已将 14.2 开始的全部用例收敛到脚本：`scripts/tutorial-step14-full-tests.sh`。
 
@@ -1077,20 +1077,20 @@ bash scripts/tutorial-step14-full-tests.sh
 
 ---
 
-> **到这里（第五·五 + 第五部分结束）你已经完成核心主线。**
-> 建议继续第六部分（动态策略管理）与第八部分（调试与运维）。
+> **到这里（第五 + 第六部分结束）你已经完成核心主线。**
+> 建议继续第七部分（动态策略管理）与第九部分（调试与运维）。
 
 ---
 
-# 第六部分（可选扩展）：动态策略管理（通过 PEP Proxy + OPAL 实时更新）
+# 第七部分（可选扩展）：动态策略管理（通过 PEP Proxy + OPAL 实时更新）
 
-## 第 15 步：通过 PEP Proxy 推送租户策略（由 OPAL 实时同步到 OPA）
+## 7.1 通过 PEP Proxy 推送租户策略（由 OPAL 实时同步到 OPA）
 
 从这一节开始，不再直连 OPA Data API。所有策略写入与读取都经由 `PEP Proxy (FastAPI)`，并通过 gateway 入口访问。
 在本版本中，`PEP Proxy` 的写操作会触发 OPAL `/data/config`，再由 `OPAL Client` 实时写入 OPA 数据路径 `/tenant_policies/*`。
 接口约定：`PUT /tenants/{tenant_id}/policies`（覆盖写入）、`GET /tenants/{tenant_id}/policies`（读取）、`DELETE /tenants/{tenant_id}/policies`（删除）、`POST /simulate`（透传 OPA 决策模拟）。
 
-### 15.1 为 acme 租户推送策略数据
+### 7.1.1 为 acme 租户推送策略数据
 
 ```bash
 curl -s -X PUT http://127.0.0.1:8080/proxy/pep/tenants/acme/policies \
@@ -1124,7 +1124,7 @@ curl -s -X PUT http://127.0.0.1:8080/proxy/pep/tenants/acme/policies \
 
 > **注意**：启用管理面策略后，策略操作需要携带有效 token（上例使用 Alice 的 tenant_admin token）。
 
-### 15.2 验证策略数据已加载
+### 7.1.2 验证策略数据已加载
 
 ```bash
 curl -s http://127.0.0.1:8080/proxy/pep/tenants/acme/policies \
@@ -1136,7 +1136,7 @@ kubectl logs -n opal deploy/opal-server --tail=50
 kubectl logs -n opal deploy/opal-client --tail=50
 ```
 
-### 15.3 模拟 OPA 决策（通过 PEP Proxy）
+### 7.1.3 模拟 OPA 决策（通过 PEP Proxy）
 
 ```bash
 curl -s -X POST http://127.0.0.1:8080/proxy/pep/simulate \
@@ -1172,7 +1172,7 @@ curl -s -X POST http://127.0.0.1:8080/proxy/pep/simulate \
 
 预期：`result.allowed = true`
 
-### 15.4 一键执行第六部分测试并汇总结果（推荐）
+### 7.1.4 一键执行第七部分测试并汇总结果（推荐）
 
 已补充完整测试脚本：`scripts/tutorial-test-step15-dynamic-policy.sh`。
 该脚本会自动完成 `15.1 → 15.4`：策略写入、读取校验、simulate allow/deny、OPAL 快照校验，并输出 PASS/FAIL 汇总。
@@ -1183,13 +1183,13 @@ bash scripts/tutorial-test-step15-dynamic-policy.sh
 
 ---
 
-# 第七部分（可选扩展）：添加更多租户
+# 第八部分（可选扩展）：添加更多租户
 
-## 第 16 步：创建第二个租户（globex）
+## 8.1 创建第二个租户（globex）
 
 重复第 6 步的流程，使用不同 tenant_id，通过 IDB Proxy 快速完成初始化：
 
-### 16.1 创建 globex 租户
+### 8.1.1 创建 globex 租户
 
 ```bash
 export NEW_TENANT_ID="globex"
@@ -1221,10 +1221,10 @@ export GLOBEX_JWKS_PATH=/realms/${NEW_TENANT_ID}/protocol/openid-connect/certs
 ```
 
 > **注意**：
-> 1) 如果已启用管理面策略（第五·五部分），此 bootstrap 请求必须携带超级管理员 token（如上示例）。  
+> 1) 如果已启用管理面策略（第五部分），此 bootstrap 请求必须携带超级管理员 token（如上示例）。  
 > 2) `GLOBEX_ISSUER` 请与实际取 token 的入口保持一致。若通过网关 `Host: www.example.com` 获取 token，应使用 `http://www.example.com/realms/...`。
 
-### 16.2 更新 JWT 策略（添加 globex realm provider）
+### 8.1.2 更新 JWT 策略（添加 globex realm provider）
 
 ```bash
 # Windows Git Bash 用户请使用：
@@ -1238,9 +1238,9 @@ echo "Tenant '${NEW_TENANT_ID}' created and JWT policy updated."
 
 ---
 
-# 第八部分：调试与运维（建议在第五部分后阅读）
+# 第九部分：调试与运维（建议在第六部分后阅读）
 
-## 查看 OPA 决策日志
+## 9.1 查看 OPA 决策日志
 
 ```bash
 kubectl logs -n opa -l app=opa -f
@@ -1250,7 +1250,7 @@ kubectl logs -n opa -l app=opa -f
 
 授权通过时，OPA 会在上游请求头中注入 `x-authz-policy-version`（由 OPA 根据租户策略包版本生成），便于将业务日志与策略版本关联排查。
 
-## 查看 OPAL 同步链路日志（实时更新排障）
+## 9.2 查看 OPAL 同步链路日志（实时更新排障）
 
 ```bash
 kubectl logs -n opal deploy/opal-server -f
@@ -1263,7 +1263,7 @@ kubectl logs -n opal deploy/opal-client -f
 - `opal-client` 是否成功消费 `tenant_policies` topic
 - `opal-client` 是否成功写入 `http://opa.opa.svc.cluster.local:8181/v1`
 
-## 查看 OPA 中已加载的策略数据
+## 9.3 查看 OPA 中已加载的策略数据
 
 ```bash
 # 通过 PEP Proxy 查看 acme 租户策略
@@ -1282,7 +1282,7 @@ curl -s http://127.0.0.1:8080/proxy/pep/tenants \
   -H "Authorization: Bearer ${ACCESS_TOKEN_SUPERADMIN}" | jq .
 ```
 
-## 查看审计事件
+## 9.4 查看审计事件
 
 ```bash
 # 查看 IDB Proxy 审计事件（身份面操作：tenant/group/saml 等）
@@ -1296,7 +1296,7 @@ curl -s "http://127.0.0.1:8080/proxy/pep/audit/events?limit=20" \
   -H "Authorization: Bearer ${ACCESS_TOKEN_SUPERADMIN}" | jq .
 ```
 
-## 更新 OPA 策略（Rego 逻辑）
+## 9.5 更新 OPA 策略（Rego 逻辑）
 
 ```bash
 # 编辑策略
@@ -1309,7 +1309,7 @@ kubectl rollout restart deployment opa -n opa
 > 注意：重启 OPA 会清除内存中的动态策略数据。若使用 OPAL，同步数据通常会在下一次策略发布或 OPAL Client 重连/重同步后恢复；生产环境建议为策略数据设计持久化来源（如数据库 + OPAL datasource）。
 > 如需无重启更新 Rego，请参见第十二部分。
 
-## 删除租户策略数据
+## 9.6 删除租户策略数据
 
 ```bash
 curl -X DELETE http://127.0.0.1:8080/proxy/pep/tenants/acme/policies \
@@ -1317,7 +1317,7 @@ curl -X DELETE http://127.0.0.1:8080/proxy/pep/tenants/acme/policies \
   -H "Authorization: Bearer ${ACCESS_TOKEN_ALICE}"
 ```
 
-## 查看 AgentGateway 策略状态
+## 9.7 查看 AgentGateway 策略状态
 
 ```bash
 kubectl get AgentgatewayPolicy -n agentgateway-system
@@ -1329,7 +1329,7 @@ kubectl get AgentgatewayPolicy mgmt-opa-ext-auth-policy -n agentgateway-system -
 
 > 若启用了 JWT provider 自动注册，可在 `jwt-auth-policy` 中检查新增租户 realm 的 `issuer` 与 `jwksPath` 是否已自动写入。
 
-## Token 过期处理
+## 9.8 Token 过期处理
 
 Keycloak 签发的 access_token 默认有效期较短（通常 5 分钟）。在实际应用中使用 refresh_token：
 
@@ -1355,7 +1355,7 @@ NEW_ACCESS_TOKEN=$(curl -s -X POST "${KEYCLOAK_URL}/realms/${TENANT_ID}/protocol
   -d "refresh_token=${REFRESH_TOKEN}" | jq -r '.access_token')
 ```
 
-## 常见问题与排查
+## 9.9 常见问题与排查
 
 1. **`AgentgatewayPolicy` 创建失败**
    - 检查 CRD 和 controller 是否已安装
@@ -1379,7 +1379,7 @@ NEW_ACCESS_TOKEN=$(curl -s -X POST "${KEYCLOAK_URL}/realms/${TENANT_ID}/protocol
 
 ## 10.1 新增接口能力（概览）
 
-### IDB Proxy（`/proxy/idb/*`）
+### 10.1.1 IDB Proxy（`/proxy/idb/*`）
 
 - Group CRUD：`/tenants/{tenant_id}/groups`
 - 用户入组/移组：`/tenants/{tenant_id}/users/{username}/groups`
@@ -1390,7 +1390,7 @@ NEW_ACCESS_TOKEN=$(curl -s -X POST "${KEYCLOAK_URL}/realms/${TENANT_ID}/protocol
 - JWT Provider 自动注册（可选）：`/tenants/{tenant_id}/jwt-providers/sync`
 - 审计查询：`/audit/events`、`/audit/events/{event_id}`
 
-### PEP Proxy（`/proxy/pep/*`）
+### 10.1.2 PEP Proxy（`/proxy/pep/*`）
 
 - 策略包（带版本/元数据）查询：`/tenants/{tenant_id}/policy-package`
 - 数据库资源授权检查：`/authorize/db`
@@ -1573,7 +1573,7 @@ PASS sidecar+dynamic-rego: baseline=200, updated=403, restored=200
 
 ---
 
-# 第九部分：清理资源
+# 第十三部分：清理资源
 
 ```bash
 # 删除所有 AgentgatewayPolicy
