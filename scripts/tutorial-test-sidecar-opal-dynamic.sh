@@ -60,7 +60,7 @@ if [[ -z "$MASTER_CLIENT_SECRET" ]]; then
   exit 1
 fi
 
-TENANT_BODY='{"display_name":"Acme Corp","client_id":"acme-frontend","tenant_admin":{"username":"alice","password":"alice123","email":"alice@acme.local","groups":["admin"],"roles":["tenant_admin"]},"users":[]}'
+TENANT_BODY='{"display_name":"Acme Corp","client_id":"acme-frontend","tenant_admin":{"username":"alice","password":"password","email":"alice@acme.local","groups":["admin"],"roles":["tenant_admin"]},"users":[]}'
 TENANT_RESP="$(curl -sS -X POST "${BASE_URL}/proxy/idb/tenants/acme/bootstrap" \
   -H "Host: ${HOST_HEADER}" -H "Content-Type: application/json" \
   --data "$TENANT_BODY")"
@@ -76,7 +76,11 @@ export MASTER_JWKS_PATH="/realms/master/protocol/openid-connect/certs"
 export ACME_ISSUER="http://www.example.com/realms/acme"
 export ACME_JWKS_PATH="/realms/acme/protocol/openid-connect/certs"
 TMP_MGMT_POLICY_FILE="$(mktemp)"
-envsubst < manifests/tutorial/54-mgmt-jwt-auth-policy.template.yaml > "$TMP_MGMT_POLICY_FILE"
+if [[ -n "${MSYSTEM:-}" ]]; then
+  MSYS_NO_PATHCONV=1 envsubst < manifests/tutorial/54-mgmt-jwt-auth-policy.template.yaml > "$TMP_MGMT_POLICY_FILE"
+else
+  envsubst < manifests/tutorial/54-mgmt-jwt-auth-policy.template.yaml > "$TMP_MGMT_POLICY_FILE"
+fi
 kubectl apply -f "$TMP_MGMT_POLICY_FILE" >/dev/null
 kubectl apply -f manifests/tutorial/55-mgmt-opa-ext-auth-policy.yaml >/dev/null
 sleep 2
@@ -89,7 +93,7 @@ TOKEN_RESP="$(curl -sS -X POST "${BASE_URL}/realms/acme/protocol/openid-connect/
   -d "client_id=acme-frontend" \
   -d "client_secret=${ACME_CLIENT_SECRET}" \
   -d "username=alice" \
-  -d "password=alice123")"
+  -d "password=password")"
 ACCESS_TOKEN="$(jq -r '.access_token // empty' <<<"$TOKEN_RESP")"
 if [[ -z "$ACCESS_TOKEN" ]]; then
   echo "get token failed: $TOKEN_RESP" >&2

@@ -3,6 +3,9 @@ $ErrorActionPreference = "Stop"
 kubectl apply -f manifests/tutorial/42-opal-server.yaml
 kubectl apply -f manifests/tutorial/56-agentgateway-sidecar-opa-service.yaml
 
+# Ensure temp directory exists for patch files.
+New-Item -ItemType Directory -Path .tmp -Force | Out-Null
+
 # Create/update sidecar policy configmap from the canonical Rego file.
 kubectl -n agentgateway-system create configmap agw-opa-sidecar-policy `
   --from-file=policy.rego=charts/agentgateway-multi-tenant/charts/opa-opal-pep-proxy/files/policy.rego `
@@ -46,18 +49,14 @@ spec:
           value: THIS_IS_A_DEV_SECRET_CHANGE_ME
         - name: OPAL_DATA_TOPICS
           value: tenant_policies
-        - name: POLICY_UPDATER_ENABLED
+        - name: OPAL_POLICY_UPDATER_ENABLED
           value: "false"
-        - name: DATA_UPDATER_ENABLED
+        - name: OPAL_DATA_UPDATER_ENABLED
           value: "true"
         - name: OPAL_INLINE_OPA_ENABLED
           value: "false"
-        - name: POLICY_STORE_URL
-          value: http://127.0.0.1:8181/v1
         - name: OPAL_POLICY_STORE_URL
           value: http://127.0.0.1:8181/v1
-        - name: OPAL_POLICY_REPO_URL
-          value: https://github.com/permitio/opal-example-policy-repo.git
 "@
 
 $patch | Set-Content -Path .tmp/agentgateway-sidecar-patch.yaml -Encoding ascii

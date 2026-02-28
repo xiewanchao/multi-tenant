@@ -15,6 +15,8 @@ TENANT_ADMIN_USERNAME="${TENANT_ADMIN_USERNAME:-alice}"
 TENANT_ADMIN_PASSWORD="${TENANT_ADMIN_PASSWORD:-password}"
 ACME_CLIENT_ID="${ACME_CLIENT_ID:-}"
 ACME_CLIENT_SECRET="${ACME_CLIENT_SECRET:-}"
+MASTER_CLIENT_ID="${MASTER_CLIENT_ID:-}"
+MASTER_CLIENT_SECRET="${MASTER_CLIENT_SECRET:-}"
 TOKEN_URL="${TOKEN_URL:-${GATEWAY_URL%/}/realms/${TENANT_ID}/protocol/openid-connect/token}"
 
 require_bin() {
@@ -52,6 +54,26 @@ if [[ -z "$ACCESS_TOKEN_ALICE" || "$ACCESS_TOKEN_ALICE" == "null" ]]; then
   exit 1
 fi
 
+# Superadmin token for endpoints without tenant_id in path (healthz, simulate, opal/*)
+ACCESS_TOKEN_SUPERADMIN=""
+if [[ -n "${MASTER_CLIENT_ID}" && -n "${MASTER_CLIENT_SECRET}" ]]; then
+  MASTER_TOKEN_URL="${GATEWAY_URL%/}/realms/master/protocol/openid-connect/token"
+  ACCESS_TOKEN_SUPERADMIN="$(
+    curl -sS -X POST "$MASTER_TOKEN_URL" \
+      -H "Host: ${HOST_HEADER}" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "grant_type=password" \
+      -d "client_id=${MASTER_CLIENT_ID}" \
+      -d "client_secret=${MASTER_CLIENT_SECRET}" \
+      -d "username=superadmin" \
+      -d "password=superadmin123" | jq -r '.access_token'
+  )"
+  if [[ -z "$ACCESS_TOKEN_SUPERADMIN" || "$ACCESS_TOKEN_SUPERADMIN" == "null" ]]; then
+    echo "WARNING: Failed to get superadmin token; some tests may fail." >&2
+    ACCESS_TOKEN_SUPERADMIN=""
+  fi
+fi
+
 PASS_COUNT=0
 FAIL_COUNT=0
 BODY_FILE="$(mktemp)"
@@ -64,17 +86,18 @@ run_http_case() {
   local path="$4"
   local data="${5:-}"
   local ctype="${6:-application/json}"
+  local token="${7:-$ACCESS_TOKEN_ALICE}"
   local status
   if [[ -n "$data" ]]; then
     status="$(curl -sS -o "$BODY_FILE" -w "%{http_code}" -X "$method" "${GATEWAY_URL%/}${path}" \
       -H "Host: ${HOST_HEADER}" \
-      -H "Authorization: Bearer ${ACCESS_TOKEN_ALICE}" \
+      -H "Authorization: Bearer ${token}" \
       -H "Content-Type: ${ctype}" \
       --data "$data")"
   else
     status="$(curl -sS -o "$BODY_FILE" -w "%{http_code}" -X "$method" "${GATEWAY_URL%/}${path}" \
       -H "Host: ${HOST_HEADER}" \
-      -H "Authorization: Bearer ${ACCESS_TOKEN_ALICE}")"
+      -H "Authorization: Bearer ${token}")"
   fi
   if [[ "$status" == "$expect" ]]; then
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -165,17 +188,21 @@ SIM_DENY='{
   }
 }'
 
+# Paths without tenant_id (/healthz, /simulate, /opal/*) require super_admin token
+ADMIN_TOKEN="${ACCESS_TOKEN_SUPERADMIN:-$ACCESS_TOKEN_ALICE}"
 echo "Running Step 15 dynamic policy test suite..."
-run_http_case "15.1a" "200" "GET" "/proxy/pep/healthz"
+run_http_case "15.1a" "200" "GET" "/proxy/pep/healthz" "" "application/json" "$ADMIN_TOKEN"
 run_http_case "15.1b" "200" "PUT" "/proxy/pep/tenants/${TENANT_ID}/policies" "$POLICY_PACKAGE"
 run_http_case "15.2a" "200" "GET" "/proxy/pep/tenants/${TENANT_ID}/policy-package"
 run_json_assert "15.2b" ".version" "$POLICY_VERSION"
 run_json_assert "15.2c" ".policies | length | tostring" "2"
-run_http_case "15.3a" "200" "POST" "/proxy/pep/simulate" "$SIM_ALLOW"
+run_http_case "15.3a" "200" "POST" "/proxy/pep/simulate" "$SIM_ALLOW" "application/json" "$ADMIN_TOKEN"
 run_json_assert "15.3b" ".result.allowed | tostring" "true"
-run_http_case "15.3c" "200" "POST" "/proxy/pep/simulate" "$SIM_DENY"
+run_http_case "15.3c" "200" "POST" "/proxy/pep/simulate" "$SIM_DENY" "application/json" "$ADMIN_TOKEN"
 run_json_assert "15.3d" ".result.allowed | tostring" "false"
-run_http_case "15.4a" "200" "GET" "/proxy/pep/opal/snapshots/tenant_policies"
+# Wait for OPAL async sync to propagate to PEP Proxy snapshot
+sleep 3
+run_http_case "15.4a" "200" "GET" "/proxy/pep/opal/snapshots/tenant_policies" "" "application/json" "$ADMIN_TOKEN"
 run_json_assert "15.4b" ".\"${TENANT_ID}\".version" "$POLICY_VERSION"
 
 echo

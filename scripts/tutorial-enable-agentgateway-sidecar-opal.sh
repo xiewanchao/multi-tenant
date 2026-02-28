@@ -58,18 +58,14 @@ spec:
           value: THIS_IS_A_DEV_SECRET_CHANGE_ME
         - name: OPAL_DATA_TOPICS
           value: tenant_policies
-        - name: POLICY_UPDATER_ENABLED
+        - name: OPAL_POLICY_UPDATER_ENABLED
           value: "false"
-        - name: DATA_UPDATER_ENABLED
+        - name: OPAL_DATA_UPDATER_ENABLED
           value: "true"
         - name: OPAL_INLINE_OPA_ENABLED
           value: "false"
-        - name: POLICY_STORE_URL
-          value: http://127.0.0.1:8181/v1
         - name: OPAL_POLICY_STORE_URL
           value: http://127.0.0.1:8181/v1
-        - name: OPAL_POLICY_REPO_URL
-          value: https://github.com/permitio/opal-example-policy-repo.git
 YAML
 
 kubectl -n "${NAMESPACE_AGW}" patch deployment agentgateway-proxy --type strategic --patch-file "$PATCH_FILE"

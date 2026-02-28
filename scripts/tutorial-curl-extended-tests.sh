@@ -18,9 +18,16 @@ GATEWAY_URL="${GATEWAY_URL:-http://127.0.0.1:8080}"
 HOST_HEADER="${HOST_HEADER:-www.example.com}"
 TENANT_ID="${TENANT_ID:-acme}"
 TENANT_USER="${TENANT_USER:-alice}"
+TENANT_USER_PASSWORD="${TENANT_USER_PASSWORD:-password}"
 GROUP_NAME="${GROUP_NAME:-finance}"
 SAML_ALIAS="${SAML_ALIAS:-corp-saml-demo}"
 CLEANUP_SAML="${CLEANUP_SAML:-true}"
+
+# Token env vars (required when mgmt-plane policies are enabled)
+ACME_CLIENT_ID="${ACME_CLIENT_ID:-}"
+ACME_CLIENT_SECRET="${ACME_CLIENT_SECRET:-}"
+MASTER_CLIENT_ID="${MASTER_CLIENT_ID:-}"
+MASTER_CLIENT_SECRET="${MASTER_CLIENT_SECRET:-}"
 
 IDB_BASE="${GATEWAY_URL%/}/proxy/idb"
 PEP_BASE="${GATEWAY_URL%/}/proxy/pep"
@@ -39,19 +46,71 @@ log() {
   printf '\n== %s ==\n' "$*"
 }
 
+# ---------- Token acquisition ----------
+ACCESS_TOKEN=""
+if [[ -n "${ACME_CLIENT_ID}" && -n "${ACME_CLIENT_SECRET}" ]]; then
+  TOKEN_URL="${GATEWAY_URL%/}/realms/${TENANT_ID}/protocol/openid-connect/token"
+  ACCESS_TOKEN="$(curl -sS -X POST "$TOKEN_URL" \
+    -H "Host: ${HOST_HEADER}" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "grant_type=password" \
+    -d "client_id=${ACME_CLIENT_ID}" \
+    -d "client_secret=${ACME_CLIENT_SECRET}" \
+    -d "username=${TENANT_USER}" \
+    -d "password=${TENANT_USER_PASSWORD}" | jq -r '.access_token')"
+  if [[ -z "$ACCESS_TOKEN" || "$ACCESS_TOKEN" == "null" ]]; then
+    echo "WARNING: Failed to get tenant-admin token, continuing without auth." >&2
+    ACCESS_TOKEN=""
+  else
+    echo "Obtained tenant-admin ($TENANT_USER) access token."
+  fi
+fi
+
+SUPERADMIN_TOKEN=""
+if [[ -n "${MASTER_CLIENT_ID}" && -n "${MASTER_CLIENT_SECRET}" ]]; then
+  MASTER_TOKEN_URL="${GATEWAY_URL%/}/realms/master/protocol/openid-connect/token"
+  SUPERADMIN_TOKEN="$(curl -sS -X POST "$MASTER_TOKEN_URL" \
+    -H "Host: ${HOST_HEADER}" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    -d "grant_type=password" \
+    -d "client_id=${MASTER_CLIENT_ID}" \
+    -d "client_secret=${MASTER_CLIENT_SECRET}" \
+    -d "username=superadmin" \
+    -d "password=superadmin123" | jq -r '.access_token')"
+  if [[ -z "$SUPERADMIN_TOKEN" || "$SUPERADMIN_TOKEN" == "null" ]]; then
+    echo "WARNING: Failed to get superadmin token." >&2
+    SUPERADMIN_TOKEN=""
+  else
+    echo "Obtained superadmin access token."
+  fi
+fi
+
+# ---------- curl helpers (with auth) ----------
+_auth_header() {
+  local token="${1:-$ACCESS_TOKEN}"
+  if [[ -n "$token" ]]; then
+    echo "Authorization: Bearer ${token}"
+  else
+    echo "X-No-Auth: true"
+  fi
+}
+
 curl_json() {
   local method="$1"
   local url="$2"
   local body="${3:-}"
+  local token="${4:-$ACCESS_TOKEN}"
   local response
   if [[ -n "$body" ]]; then
     response="$(curl -fsS -X "$method" "$url" \
       -H "Host: ${HOST_HEADER}" \
+      -H "$(_auth_header "$token")" \
       -H "Content-Type: application/json" \
       --data "$body")"
   else
     response="$(curl -fsS -X "$method" "$url" \
-      -H "Host: ${HOST_HEADER}")"
+      -H "Host: ${HOST_HEADER}" \
+      -H "$(_auth_header "$token")")"
   fi
   if jq -e . >/dev/null 2>&1 <<<"$response"; then
     jq . <<<"$response"
@@ -64,22 +123,27 @@ curl_raw() {
   local method="$1"
   local url="$2"
   local body="${3:-}"
+  local token="${4:-$ACCESS_TOKEN}"
   if [[ -n "$body" ]]; then
     curl -fsS -X "$method" "$url" \
       -H "Host: ${HOST_HEADER}" \
+      -H "$(_auth_header "$token")" \
       -H "Content-Type: application/json" \
       --data "$body"
   else
     curl -fsS -X "$method" "$url" \
-      -H "Host: ${HOST_HEADER}"
+      -H "Host: ${HOST_HEADER}" \
+      -H "$(_auth_header "$token")"
   fi
 }
 
 SAML_METADATA_XML="${SAML_METADATA_XML:-<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" entityID=\"urn:demo:idp:${TENANT_ID}\"><IDPSSODescriptor protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\"><SingleSignOnService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://idp.example.com/${TENANT_ID}/sso\"/><SingleLogoutService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\" Location=\"https://idp.example.com/${TENANT_ID}/slo\"/></IDPSSODescriptor></EntityDescriptor>}"
 
+# Use superadmin token for healthz (no tenant_id in path → requires super_admin role)
+HEALTHZ_TOKEN="${SUPERADMIN_TOKEN:-$ACCESS_TOKEN}"
 log "Health checks"
-curl_json GET "${IDB_BASE}/healthz"
-curl_json GET "${PEP_BASE}/healthz"
+curl_json GET "${IDB_BASE}/healthz" "" "$HEALTHZ_TOKEN"
+curl_json GET "${PEP_BASE}/healthz" "" "$HEALTHZ_TOKEN"
 
 log "Create/list group"
 group_create_body="$(jq -nc --arg name "$GROUP_NAME" '{name:$name, attributes:{env:["tutorial"], owner:["platform"]}}')"
@@ -131,6 +195,7 @@ saml_mapper_body='{
 set +e
 mapper_resp="$(curl -sS -X POST "${IDB_BASE}/tenants/${TENANT_ID}/saml/idps/${SAML_ALIAS}/mappers" \
   -H "Host: ${HOST_HEADER}" \
+  -H "$(_auth_header)" \
   -H "Content-Type: application/json" \
   --data "$saml_mapper_body")"
 mapper_rc=$?
@@ -173,6 +238,8 @@ db_policy_pkg="$(jq -nc --arg ver "$POLICY_VERSION" --arg tenant "$TENANT_ID" --
 curl_json PUT "${PEP_BASE}/tenants/${TENANT_ID}/policies" "$db_policy_pkg"
 curl_json GET "${PEP_BASE}/tenants/${TENANT_ID}/policy-package"
 
+# /authorize/db has no tenant_id in path → super_admin required through gateway
+DB_AUTH_TOKEN="${SUPERADMIN_TOKEN:-$ACCESS_TOKEN}"
 log "DB authorize allow/deny checks"
 db_allow_req="$(jq -nc --arg tenant "$TENANT_ID" --arg user "$TENANT_USER" --arg group "$GROUP_NAME" '{
   tenant_id:$tenant,
@@ -183,7 +250,7 @@ db_allow_req="$(jq -nc --arg tenant "$TENANT_ID" --arg user "$TENANT_USER" --arg
   resource_kind:"database",
   resource:"db1.sales.orders"
 }')"
-curl_json POST "${PEP_BASE}/authorize/db" "$db_allow_req"
+curl_json POST "${PEP_BASE}/authorize/db" "$db_allow_req" "$DB_AUTH_TOKEN"
 
 db_deny_req="$(jq -nc --arg tenant "$TENANT_ID" --arg user "$TENANT_USER" --arg group "$GROUP_NAME" '{
   tenant_id:$tenant,
@@ -194,10 +261,11 @@ db_deny_req="$(jq -nc --arg tenant "$TENANT_ID" --arg user "$TENANT_USER" --arg 
   resource_kind:"database",
   resource:"db1.sales.orders"
 }')"
-curl_json POST "${PEP_BASE}/authorize/db" "$db_deny_req"
+curl_json POST "${PEP_BASE}/authorize/db" "$db_deny_req" "$DB_AUTH_TOKEN"
 
+# Audit endpoints need super_admin or tenant_admin matching tenant_id
 log "Audit replay (PEP policy upsert event)"
-audit_events_json="$(curl_raw GET "${PEP_BASE}/audit/events?tenant_id=${TENANT_ID}&action=upsert_tenant_policies&limit=20")"
+audit_events_json="$(curl_raw GET "${PEP_BASE}/audit/events?tenant_id=${TENANT_ID}&action=upsert_tenant_policies&limit=20" "" "${SUPERADMIN_TOKEN:-$ACCESS_TOKEN}")"
 upsert_event_id="$(jq -r 'if length > 0 then .[-1].id else "" end' <<<"$audit_events_json")"
 if [[ -z "$upsert_event_id" || "$upsert_event_id" == "null" ]]; then
   echo "No upsert_tenant_policies audit event found; cannot replay." >&2
@@ -205,10 +273,12 @@ if [[ -z "$upsert_event_id" || "$upsert_event_id" == "null" ]]; then
 fi
 echo "Using audit event id: ${upsert_event_id}"
 
+# /audit/replay has no tenant_id in path → super_admin required through gateway
+REPLAY_TOKEN="${SUPERADMIN_TOKEN:-$ACCESS_TOKEN}"
 log "Delete policies then replay"
 curl_json DELETE "${PEP_BASE}/tenants/${TENANT_ID}/policies"
 curl_json GET "${PEP_BASE}/tenants/${TENANT_ID}/policy-package"
-curl_json POST "${PEP_BASE}/audit/replay/${upsert_event_id}" '{}'
+curl_json POST "${PEP_BASE}/audit/replay/${upsert_event_id}" '{}' "$REPLAY_TOKEN"
 curl_json GET "${PEP_BASE}/tenants/${TENANT_ID}/policy-package"
 
 if [[ "${CLEANUP_SAML}" == "true" ]]; then
