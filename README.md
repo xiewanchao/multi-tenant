@@ -191,6 +191,43 @@ Helm 部署详见 [`docs/helm-umbrella-deploy.md`](docs/helm-umbrella-deploy.md)
 >
 > **模板渲染说明**：涉及 `${MASTER_ISSUER}`、`${ACME_ISSUER}` 等变量的策略文件使用 `*.template.yaml`，需通过 `envsubst` 渲染后再 `kubectl apply`。
 
+### Proxy 镜像准备（IDB / PEP）
+
+教程中的 Deployment 默认使用以下本地镜像标签：
+
+- `idb-proxy-fastapi:local`（`manifests/tutorial/20-idb-proxy-deployment.yaml`）
+- `pep-proxy-fastapi:local`（`manifests/tutorial/50-pep-proxy-deployment.yaml`）
+
+先在仓库根目录构建镜像：
+
+```bash
+docker build -t idb-proxy-fastapi:local proxies/idb-proxy
+docker build -t pep-proxy-fastapi:local proxies/pep-proxy
+```
+
+如果你使用 Kind 集群，需要把本地镜像导入到集群节点（默认集群名 `kind`）：
+
+```bash
+kind load docker-image idb-proxy-fastapi:local --name kind
+kind load docker-image pep-proxy-fastapi:local --name kind
+```
+
+如果你使用的是非 Kind 集群（例如云上 K8s），请将镜像推送到可访问仓库，并更新 Deployment 镜像：
+
+```bash
+docker tag idb-proxy-fastapi:local ghcr.io/<your-org>/idb-proxy-fastapi:0.1.0
+docker tag pep-proxy-fastapi:local ghcr.io/<your-org>/pep-proxy-fastapi:0.1.0
+docker push ghcr.io/<your-org>/idb-proxy-fastapi:0.1.0
+docker push ghcr.io/<your-org>/pep-proxy-fastapi:0.1.0
+```
+
+然后在部署后覆盖镜像（或直接修改 tutorial YAML 中的 `image`）：
+
+```bash
+kubectl -n proxy-system set image deploy/idb-proxy idb-proxy=ghcr.io/<your-org>/idb-proxy-fastapi:0.1.0
+kubectl -n proxy-system set image deploy/pep-proxy pep-proxy=ghcr.io/<your-org>/pep-proxy-fastapi:0.1.0
+```
+
 ### 路径 A：已有环境（推荐）
 
 确保已完成：
@@ -363,7 +400,7 @@ echo "Admin token: ${KEYCLOAK_TOKEN:0:20}..."
 
 ### 2.2.1 部署 IDB Proxy 服务
 
-> 下方镜像请替换为你的 FastAPI 实现镜像。生产环境建议将 admin 凭据放入 Secret，这里为教程演示简化配置。
+> 请先完成前提条件中的"Proxy 镜像准备（IDB / PEP）"。生产环境建议将 admin 凭据放入 Secret，这里为教程演示简化配置。
 
 ```bash
 kubectl create namespace proxy-system --dry-run=client -o yaml | kubectl apply -f -
@@ -770,6 +807,7 @@ kubectl get svc -n opal opal-server
 ### 4.3.1 部署 PEP Proxy（放在 OPA + OPAL 部分，确保可直接 Ready）
 
 `pep-proxy` 的 `/healthz` 会访问 OPA `/health`，在 OPAL 模式下还会检查 OPAL Server `/healthcheck`。因此把 `pep-proxy` 放在 OPA + OPAL 部分部署，避免依赖未就绪导致 `pep-proxy` readiness/liveness 失败。
+另外请确保 `pep-proxy-fastapi:local` 镜像已按前提条件构建并可被集群拉取（Kind 场景需先 `kind load docker-image`）。
 
 ```bash
 kubectl apply -f manifests/tutorial/50-pep-proxy-deployment.yaml
