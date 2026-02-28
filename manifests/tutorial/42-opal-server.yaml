@@ -82,7 +82,9 @@ spec:
           name: http
         env:
         - name: OPAL_POLICY_REPO_URL
-          value: https://github.com/permitio/opal-example-policy-repo.git
+          value: ""
+        - name: OPAL_POLICY_REPO_POLLING_INTERVAL
+          value: "0"
         - name: OPAL_BROADCAST_URI
           value: postgres://postgres:postgres@postgres.opal.svc.cluster.local:5432/opal
         - name: OPAL_DATA_CONFIG_SOURCES

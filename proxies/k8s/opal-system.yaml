@@ -93,7 +93,9 @@ spec:
           name: http
         env:
         - name: OPAL_POLICY_REPO_URL
-          value: https://github.com/permitio/opal-example-policy-repo.git
+          value: ""
+        - name: OPAL_POLICY_REPO_POLLING_INTERVAL
+          value: "0"
         - name: OPAL_BROADCAST_URI
           value: postgres://postgres:postgres@postgres.opal.svc.cluster.local:5432/opal
         - name: OPAL_DATA_CONFIG_SOURCES
@@ -160,15 +162,11 @@ spec:
               key: OPAL_CLIENT_TOKEN
         - name: OPAL_DATA_TOPICS
           value: tenant_policies
-        - name: POLICY_UPDATER_ENABLED
+        - name: OPAL_POLICY_UPDATER_ENABLED
           value: "false"
-        - name: DATA_UPDATER_ENABLED
+        - name: OPAL_DATA_UPDATER_ENABLED
           value: "true"
         - name: OPAL_INLINE_OPA_ENABLED
           value: "false"
-        - name: POLICY_STORE_URL
-          value: http://opa.opa.svc.cluster.local:8181
         - name: OPAL_POLICY_STORE_URL
           value: http://opa.opa.svc.cluster.local:8181
-        - name: OPAL_POLICY_REPO_URL
-          value: https://github.com/permitio/opal-example-policy-repo.git

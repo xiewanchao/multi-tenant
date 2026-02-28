@@ -436,21 +436,21 @@ TENANT_BOOTSTRAP=$(curl -s -X POST http://127.0.0.1:8080/proxy/idb/tenants/${TEN
       "username": "alice",
       "password": "password",
       "email": "alice@acme.com",
-      "group": "admin"
+      "groups": ["admin"]
     },
     "users": [
       {
         "username": "bob",
         "password": "password",
         "email": "bob@acme.com",
-        "group": "users",
+        "groups": ["users"],
         "roles": ["analyst"]
       },
       {
         "username": "charlie",
         "password": "password",
         "email": "charlie@acme.com",
-        "group": "users",
+        "groups": ["users"],
         "roles": ["viewer"]
       }
     ]
@@ -492,13 +492,14 @@ echo "  [${TENANT_ID}] charlie / password    → role: viewer"
 
 ## 第 7 步：获取 JWKS 信息
 
+> **Issuer 一致性说明**：JWT policy 中的 `issuer` 必须和 token 中的 `iss` 字段完全匹配。Keycloak 会根据请求的 `Host` 头来填写 `iss`。如果 token 是通过 Gateway（Host: www.example.com）获取的，issuer 就是 `http://www.example.com/realms/<realm>`；如果通过 port-forward 直连，issuer 是 `http://localhost:9080/realms/<realm>`。**本教程使用 Gateway URL 作为统一 issuer**，因此后续测试脚本也统一通过 Gateway 获取 token。
+
 ```bash
-# Master realm
-export MASTER_ISSUER=$KEYCLOAK_URL/realms/master
+# 使用 Gateway 公共地址作为 issuer（匹配 token 中的 iss 字段）
+export MASTER_ISSUER=http://www.example.com/realms/master
 export MASTER_JWKS_PATH=/realms/master/protocol/openid-connect/certs
 
-# 租户 realm
-export ACME_ISSUER=$KEYCLOAK_URL/realms/${TENANT_ID}
+export ACME_ISSUER=http://www.example.com/realms/${TENANT_ID}
 export ACME_JWKS_PATH=/realms/${TENANT_ID}/protocol/openid-connect/certs
 
 echo "Master Issuer: $MASTER_ISSUER"
@@ -545,6 +546,11 @@ kubectl get referencegrant -n keycloak
 ```bash
 envsubst < manifests/tutorial/31-jwt-auth-policy.template.yaml | kubectl apply -f -
 ```
+
+> **Windows Git Bash 用户注意**：MINGW64/Git Bash 会自动将以 `/` 开头的路径参数转换为 Windows 路径（如 `/realms/...` → `C:/Program Files/Git/realms/...`），导致 JWKS 路径错误。请使用 `MSYS_NO_PATHCONV=1` 前缀：
+> ```bash
+> MSYS_NO_PATHCONV=1 envsubst < manifests/tutorial/31-jwt-auth-policy.template.yaml | MSYS_NO_PATHCONV=1 kubectl apply -f -
+> ```
 
 > **说明**：每新增一个租户 realm，需要在此策略中添加对应的 provider。生产环境建议通过 K8s Operator 自动化管理。
 >
@@ -641,7 +647,7 @@ echo "Bob token: ${ACCESS_TOKEN_BOB:0:20}..."
 
 ```bash
 # 解码 Alice 的 token（查看 payload 部分）
-echo $ACCESS_TOKEN_ALICE | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{tenant_id, roles, preferred_username, group}'
+echo $ACCESS_TOKEN_ALICE | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{tenant_id, roles, preferred_username, groups}'
 ```
 
 预期输出类似：
@@ -651,7 +657,7 @@ echo $ACCESS_TOKEN_ALICE | cut -d'.' -f2 | base64 -d 2>/dev/null | jq '{tenant_i
   "tenant_id": "acme",
   "roles": ["tenant_admin", "default-roles-acme"],
   "preferred_username": "alice",
-  "group": "admin"
+  "groups": ["/admin"]
 }
 ```
 
@@ -755,6 +761,7 @@ kubectl get svc -n opal opal-server
 > - `proxies/k8s/opal-system.yaml` 内置了演示用 token（`THIS_IS_A_DEV_SECRET_CHANGE_ME`），请在生产环境替换。
 > - `opal-client` 以 standalone 模式工作，目标 OPA 为 `http://opa.opa.svc.cluster.local:8181/v1`。
 > - `OPAL_DATA_CONFIG_SOURCES` 已指向 `pep-proxy` 的快照接口 `/opal/snapshots/tenant_policies`，用于客户端重连/重启后的数据补齐。
+> - `OPAL_POLICY_UPDATER_ENABLED=false`（注意 `OPAL_` 前缀不可省略）禁用 Rego 策略同步，仅启用数据同步，避免 OPAL 覆盖 ConfigMap 挂载的 OPA 策略文件。
 
 ---
 
@@ -934,6 +941,7 @@ curl -i http://127.0.0.1:8080/api/v1/tenants/other-corp/roles \
 管理面 JWT 策略是独立的 `AgentgatewayPolicy`，其 `targetRefs` 绑定到 `idb-proxy-route` 和 `pep-proxy-route`，与业务面的 `jwt-auth-policy` 分离。
 
 ```bash
+# Windows Git Bash 用户请使用：MSYS_NO_PATHCONV=1 envsubst < ... | MSYS_NO_PATHCONV=1 kubectl apply -f -
 envsubst < manifests/tutorial/54-mgmt-jwt-auth-policy.template.yaml | kubectl apply -f -
 ```
 
@@ -1185,9 +1193,12 @@ bash scripts/tutorial-test-step15-dynamic-policy.sh
 
 ```bash
 export NEW_TENANT_ID="globex"
+# 若已启用管理面策略，请先确保 ACCESS_TOKEN_SUPERADMIN 已设置
+# export ACCESS_TOKEN_SUPERADMIN="<superadmin access token>"
 
 GLOBEX_BOOTSTRAP=$(curl -s -X POST http://127.0.0.1:8080/proxy/idb/tenants/${NEW_TENANT_ID}/bootstrap \
   -H "host: www.example.com" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN_SUPERADMIN}" \
   -H "Content-Type: application/json" \
   -d '{
     "display_name": "Globex Corporation",
@@ -1196,7 +1207,7 @@ GLOBEX_BOOTSTRAP=$(curl -s -X POST http://127.0.0.1:8080/proxy/idb/tenants/${NEW
       "username": "gina",
       "password": "password",
       "email": "gina@globex.com",
-      "group": "admin"
+      "groups": ["admin"]
     }
   }')
 
@@ -1205,15 +1216,19 @@ echo "$GLOBEX_BOOTSTRAP" | jq .
 export GLOBEX_CLIENT_ID=$(echo "$GLOBEX_BOOTSTRAP" | jq -r '.client_id')
 export GLOBEX_CLIENT_SECRET=$(echo "$GLOBEX_BOOTSTRAP" | jq -r '.client_secret')
 export GLOBEX_CLIENT_UUID=$(echo "$GLOBEX_BOOTSTRAP" | jq -r '.client_uuid')
-export GLOBEX_ISSUER=$KEYCLOAK_URL/realms/${NEW_TENANT_ID}
+export GLOBEX_ISSUER=http://www.example.com/realms/${NEW_TENANT_ID}
 export GLOBEX_JWKS_PATH=/realms/${NEW_TENANT_ID}/protocol/openid-connect/certs
 ```
 
-> **注意**：如果已启用管理面策略（第五·五部分），此 bootstrap 请求需要携带超级管理员 token。如果尚未启用管理面策略，可以不带 token。
+> **注意**：
+> 1) 如果已启用管理面策略（第五·五部分），此 bootstrap 请求必须携带超级管理员 token（如上示例）。  
+> 2) `GLOBEX_ISSUER` 请与实际取 token 的入口保持一致。若通过网关 `Host: www.example.com` 获取 token，应使用 `http://www.example.com/realms/...`。
 
 ### 16.2 更新 JWT 策略（添加 globex realm provider）
 
 ```bash
+# Windows Git Bash 用户请使用：
+# MSYS_NO_PATHCONV=1 envsubst < manifests/tutorial/61-jwt-auth-policy-add-globex.template.yaml | MSYS_NO_PATHCONV=1 kubectl apply -f -
 envsubst < manifests/tutorial/61-jwt-auth-policy-add-globex.template.yaml | kubectl apply -f -
 
 echo "Tenant '${NEW_TENANT_ID}' created and JWT policy updated."
@@ -1356,43 +1371,7 @@ NEW_ACCESS_TOKEN=$(curl -s -X POST "${KEYCLOAK_URL}/realms/${TENANT_ID}/protocol
 5. **管理面接口返回 403**
    - 说明 JWT 已通过但 OPA 管理面规则拒绝（角色/租户不匹配）
 
----
 
-# 第九部分：清理资源
-
-```bash
-# 删除所有 AgentgatewayPolicy
-kubectl delete AgentgatewayPolicy opa-ext-auth-policy -n agentgateway-system
-kubectl delete AgentgatewayPolicy jwt-auth-policy -n agentgateway-system
-kubectl delete AgentgatewayPolicy mgmt-jwt-auth-policy -n agentgateway-system
-kubectl delete AgentgatewayPolicy mgmt-opa-ext-auth-policy -n agentgateway-system
-
-# 删除 OPA 与 OPAL
-kubectl delete ns opa
-kubectl delete ns opal
-
-# 删除所有 HTTPRoute（都在 agentgateway-system）
-kubectl delete httproute keycloak-oidc-route -n agentgateway-system
-kubectl delete httproute admin-api-route -n agentgateway-system
-kubectl delete httproute tenant-api-route -n agentgateway-system
-kubectl delete httproute idb-proxy-route -n agentgateway-system
-kubectl delete httproute pep-proxy-route -n agentgateway-system
-
-# 删除 ReferenceGrant
-kubectl delete referencegrant allow-routes-to-keycloak -n keycloak
-kubectl delete referencegrant allow-routes-to-httpbin -n httpbin
-kubectl delete referencegrant allow-routes-to-idb-proxy -n proxy-system
-kubectl delete referencegrant allow-routes-to-pep-proxy -n proxy-system
-
-# 删除 Keycloak
-kubectl delete ns keycloak
-
-# 删除 httpbin
-kubectl delete -f https://raw.githubusercontent.com/kgateway-dev/kgateway/refs/heads/main/examples/httpbin.yaml
-
-# 删除 IDB Proxy / PEP Proxy
-kubectl delete ns proxy-system
-```
 
 ---
 
@@ -1498,6 +1477,11 @@ curl -sS -X POST "http://127.0.0.1:8080/proxy/pep/authorize/db" \
 kubectl -n agentgateway-system port-forward deployment/agentgateway-proxy 8080:80
 
 # 运行脚本（默认 tenant=acme, user=alice）
+# 当管理面策略已启用时，建议同时提供客户端凭据用于自动获取 token：
+MASTER_CLIENT_ID=master-gateway-client \
+MASTER_CLIENT_SECRET=<master_client_secret> \
+ACME_CLIENT_ID=acme-gateway-client \
+ACME_CLIENT_SECRET=<acme_client_secret> \
 bash scripts/tutorial-curl-extended-tests.sh
 
 # 自定义参数
@@ -1505,6 +1489,11 @@ GATEWAY_URL=http://127.0.0.1:8080 \
 HOST_HEADER=www.example.com \
 TENANT_ID=acme \
 TENANT_USER=alice \
+TENANT_USER_PASSWORD=password \
+MASTER_CLIENT_ID=master-gateway-client \
+MASTER_CLIENT_SECRET=<master_client_secret> \
+ACME_CLIENT_ID=acme-gateway-client \
+ACME_CLIENT_SECRET=<acme_client_secret> \
 GROUP_NAME=finance \
 SAML_ALIAS=corp-saml-demo \
 CLEANUP_SAML=true \
@@ -1527,7 +1516,7 @@ kubectl apply -f manifests/tutorial/11-httpbin-networkpolicy.yaml
 
 # 第十一部分（可选）：AgentGateway 挂载 OPA Sidecar + OPAL Client
 
-> **目标**：将 OPA 和 OPAL Client 作为 sidecar 容器注入到 `agentgateway-proxy` Pod 中，使 ext_authz 走 localhost 而非跨 Namespace 网络调用，降低每请求延迟。
+> **目标**：将 OPA 和 OPAL Client 作为 sidecar 容器注入到 `agentgateway-proxy` Pod 中，使 ext_authz 请求优先命中同 Pod 的 OPA sidecar（通过同 namespace Service 暴露），降低跨 Namespace 调用开销。
 
 > **适用场景**：当你观测到 ext_authz 的跨 Namespace gRPC 延迟成为瓶颈，或需要 OPA 与 Gateway 同生同灭以提升可靠性时。
 
@@ -1584,18 +1573,41 @@ PASS sidecar+dynamic-rego: baseline=200, updated=403, restored=200
 
 ---
 
-# Helm 部署参考
+# 第九部分：清理资源
 
-如果你走 umbrella chart 而非分步 manifest，请参考：
+```bash
+# 删除所有 AgentgatewayPolicy
+kubectl delete AgentgatewayPolicy opa-ext-auth-policy -n agentgateway-system
+kubectl delete AgentgatewayPolicy jwt-auth-policy -n agentgateway-system
+kubectl delete AgentgatewayPolicy mgmt-jwt-auth-policy -n agentgateway-system
+kubectl delete AgentgatewayPolicy mgmt-opa-ext-auth-policy -n agentgateway-system
 
-- [`docs/helm-umbrella-deploy.md`](docs/helm-umbrella-deploy.md) — Helm 部署完整指南
-- [`charts/agentgateway-multi-tenant/values.yaml`](charts/agentgateway-multi-tenant/values.yaml) — 默认配置
-- [`charts/agentgateway-multi-tenant/values-prod.example.yaml`](charts/agentgateway-multi-tenant/values-prod.example.yaml) — 生产配置示例
-- [`docs/values-prod-example-fields-zh.md`](docs/values-prod-example-fields-zh.md) — 生产配置字段说明
+# 删除 OPA 与 OPAL
+kubectl delete ns opa
+kubectl delete ns opal
 
-核心思路一致，只是把教程中的分散 manifests 统一参数化为 Helm values。
+# 删除所有 HTTPRoute（都在 agentgateway-system）
+kubectl delete httproute keycloak-oidc-route -n agentgateway-system
+kubectl delete httproute admin-api-route -n agentgateway-system
+kubectl delete httproute tenant-api-route -n agentgateway-system
+kubectl delete httproute idb-proxy-route -n agentgateway-system
+kubectl delete httproute pep-proxy-route -n agentgateway-system
 
----
+# 删除 ReferenceGrant
+kubectl delete referencegrant allow-routes-to-keycloak -n keycloak
+kubectl delete referencegrant allow-routes-to-httpbin -n httpbin
+kubectl delete referencegrant allow-routes-to-idb-proxy -n proxy-system
+kubectl delete referencegrant allow-routes-to-pep-proxy -n proxy-system
+
+# 删除 Keycloak
+kubectl delete ns keycloak
+
+# 删除 httpbin
+kubectl delete -f https://raw.githubusercontent.com/kgateway-dev/kgateway/refs/heads/main/examples/httpbin.yaml
+
+# 删除 IDB Proxy / PEP Proxy
+kubectl delete ns proxy-system
+```
 
 # 相关文档
 

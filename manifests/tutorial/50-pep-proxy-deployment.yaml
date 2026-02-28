@@ -19,7 +19,7 @@ spec:
         imagePullPolicy: IfNotPresent
         env:
         - name: POLICY_SYNC_BACKEND
-          value: opa
+          value: opal
         - name: OPA_URL
           value: http://opa.opa.svc.cluster.local:8181
         - name: OPAL_SERVER_URL

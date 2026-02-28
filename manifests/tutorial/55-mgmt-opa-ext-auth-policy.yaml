@@ -16,7 +16,7 @@ spec:
   traffic:
     extAuth:
       backendRef:
-        name: agentgateway-opa-sidecar
-        namespace: agentgateway-system
+        name: opa
+        namespace: opa
         port: 9191
       grpc: {}
