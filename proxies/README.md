@@ -13,9 +13,7 @@ This folder contains a minimal reference implementation for:
 - `pep-proxy/app/main.py`
 - `pep-proxy/requirements.txt`
 - `pep-proxy/Dockerfile`
-- `k8s/proxy-system.yaml`
-- `k8s/proxy-gateway-routes.yaml`
-- `k8s/opal-system.yaml`
+- Kubernetes manifests are maintained in `../manifests/bundles/`
 
 ## Build Images
 
@@ -26,14 +24,14 @@ docker push ghcr.io/your-org/idb-proxy-fastapi:0.1.0
 docker push ghcr.io/your-org/pep-proxy-fastapi:0.1.0
 ```
 
-If you use different tags, update them in `proxies/k8s/proxy-system.yaml`.
+If you use different tags, update them in `manifests/bundles/proxy-system.yaml`.
 
 ## Deploy to Kubernetes
 
 ```bash
-kubectl apply -f proxies/k8s/opal-system.yaml
-kubectl apply -f proxies/k8s/proxy-system.yaml
-kubectl apply -f proxies/k8s/proxy-gateway-routes.yaml
+kubectl apply -f manifests/bundles/opal-system.yaml
+kubectl apply -f manifests/bundles/proxy-system.yaml
+kubectl apply -f manifests/bundles/proxy-gateway-routes.yaml
 ```
 
 Notes:

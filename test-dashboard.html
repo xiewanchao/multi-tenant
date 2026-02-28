@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>多租户安全链路 · 渐进式测试面板</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink: #1a1a1a;
+      --cream: #f5f0e8;
+      --warm: #c8a96e;
+      --warm-dark: #9e7c45;
+      --gray: #888;
+      --border: #ddd5c5;
+      --green: #2d6a4f;
+      --green-bg: #eaf4ee;
+      --red: #7b2d2d;
+      --red-bg: #f9eaea;
+      --blue: #2c4a7b;
+      --blue-bg: #eaf0fb;
+      --orange: #7a4a10;
+      --orange-bg: #fdf3e3;
+      --purple: #5b2d7b;
+      --purple-bg: #f3eafb;
+    }
+
+    body {
+      min-height: 100vh;
+      font-family: 'DM Sans', sans-serif;
+      background: var(--cream);
+      color: var(--ink);
+    }
+
+    /* ── Topbar ── */
+    .topbar {
+      background: var(--ink);
+      padding: 0 2.5rem;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .topbar-logo {
+      font-family: 'Playfair Display', serif;
+      color: #fff;
+      font-size: 1.1rem;
+      letter-spacing: 0.04em;
+    }
+    .topbar-logo span { color: var(--warm); }
+
+    .topbar-nav {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .topbar-nav a {
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+      text-decoration: none;
+      padding: 0.3rem 0.7rem;
+      border-radius: 2px;
+      transition: color 0.2s, background 0.2s;
+      cursor: pointer;
+    }
+    .topbar-nav a:hover { color: #fff; }
+    .topbar-nav a.active { color: var(--warm); background: rgba(200,169,110,0.12); }
+
+    /* ── Container ── */
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 2rem 2rem 4rem;
+    }
+
+    /* ── Config panel ── */
+    .config-panel {
+      background: #fff;
+      border: 1.5px solid var(--border);
+      padding: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .config-panel h2 {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .config-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem 1.5rem;
+    }
+    .config-field label {
+      display: block;
+      font-size: 0.72rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--gray);
+      margin-bottom: 0.3rem;
+    }
+    .config-field input {
+      width: 100%;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.78rem;
+      padding: 0.45rem 0.7rem;
+      border: 1.5px solid var(--border);
+      background: var(--cream);
+      color: var(--ink);
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .config-field input:focus { border-color: var(--warm); }
+    .config-field.full { grid-column: 1 / -1; }
+
+    .config-actions {
+      margin-top: 1rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    /* ── Page header ── */
+    .page-header {
+      margin-bottom: 1.5rem;
+      border-bottom: 1.5px solid var(--border);
+      padding-bottom: 1.2rem;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .page-header h1 {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.75rem;
+      line-height: 1.2;
+    }
+    .page-header p {
+      font-size: 0.82rem;
+      color: var(--gray);
+      margin-top: 0.3rem;
+    }
+    .summary-bar {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .summary-pill {
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 0.3rem 0.9rem;
+      border-radius: 2px;
+    }
+    .pill-total { background: var(--ink); color: #fff; }
+    .pill-ok    { background: var(--green-bg); color: var(--green); }
+    .pill-fail  { background: var(--red-bg); color: var(--red); }
+    .pill-skip  { background: #f0f0f0; color: var(--gray); }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1.75rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .btn {
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.78rem;
+      font-weight: 500;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border: none;
+      padding: 0.55rem 1.2rem;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .btn-primary { background: var(--ink); color: #fff; }
+    .btn-primary:hover { background: var(--warm-dark); }
+    .btn-outline {
+      background: none;
+      color: var(--gray);
+      border: 1.5px solid var(--border);
+    }
+    .btn-outline:hover { border-color: var(--ink); color: var(--ink); }
+    .btn-warm { background: var(--warm); color: #fff; }
+    .btn-warm:hover { background: var(--warm-dark); }
+
+    /* ── Section ── */
+    .section {
+      margin-bottom: 2rem;
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      background: var(--ink);
+      color: #fff;
+      cursor: pointer;
+      user-select: none;
+    }
+    .section-header h3 {
+      font-family: 'Playfair Display', serif;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .section-header .section-badge {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.65rem;
+      background: rgba(200,169,110,0.2);
+      color: var(--warm);
+      padding: 0.15rem 0.5rem;
+      border-radius: 2px;
+    }
+    .section-header .section-actions {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .section-header .btn-section {
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.68rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.7);
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 0.25rem 0.65rem;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .section-header .btn-section:hover { color: #fff; border-color: rgba(255,255,255,0.5); }
+
+    .section-counter {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.68rem;
+      color: rgba(255,255,255,0.5);
+    }
+
+    .section-body {
+      border: 1.5px solid var(--border);
+      border-top: none;
+      background: #fff;
+    }
+    .section-body.collapsed { display: none; }
+
+    .section-desc {
+      padding: 0.75rem 1.25rem;
+      font-size: 0.78rem;
+      color: var(--gray);
+      border-bottom: 1px solid var(--border);
+      line-height: 1.5;
+    }
+
+    /* ── Test rows ── */
+    .test-row {
+      display: grid;
+      grid-template-columns: 32px 1fr auto auto;
+      align-items: center;
+      gap: 0 1rem;
+      padding: 0.85rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.15s;
+    }
+    .test-row:last-child { border-bottom: none; }
+    .test-row:hover { background: #fafaf7; }
+
+    .row-index {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--border);
+      text-align: center;
+    }
+
+    .row-main { min-width: 0; }
+
+    .row-label {
+      font-size: 0.83rem;
+      font-weight: 500;
+      color: var(--ink);
+      margin-bottom: 0.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      font-size: 0.6rem;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 0.1rem 0.45rem;
+      border-radius: 2px;
+    }
+    .tag-get    { background: var(--blue-bg);   color: var(--blue); }
+    .tag-post   { background: var(--orange-bg); color: var(--orange); }
+    .tag-put    { background: var(--purple-bg); color: var(--purple); }
+    .tag-delete { background: var(--red-bg);    color: var(--red); }
+    .tag-auth   { background: var(--green-bg);  color: var(--green); }
+    .tag-open   { background: #f0f0f0;          color: var(--gray); }
+
+    .row-url {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--gray);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 520px;
+    }
+
+    .row-expect {
+      font-size: 0.72rem;
+      color: var(--gray);
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .row-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--border);
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .status-dot.pending  { background: var(--border); }
+    .status-dot.loading  { background: var(--warm); animation: pulse 0.8s infinite; }
+    .status-dot.ok       { background: #3a9e6a; }
+    .status-dot.fail     { background: #c0392b; }
+    .status-dot.warn     { background: #e67e22; }
+
+    @keyframes pulse {
+      0%,100% { opacity: 1; } 50% { opacity: 0.3; }
+    }
+
+    .result-chip {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.68rem;
+      font-weight: 500;
+      padding: 0.2rem 0.5rem;
+      border-radius: 2px;
+      min-width: 56px;
+      text-align: center;
+      transition: all 0.25s;
+    }
+    .chip-idle { background: #f0f0f0; color: #bbb; }
+    .chip-ok   { background: var(--green-bg); color: var(--green); }
+    .chip-fail { background: var(--red-bg);   color: var(--red); }
+    .chip-warn { background: var(--orange-bg);color: var(--orange); }
+
+    .btn-test {
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--gray);
+      padding: 0.25rem 0.65rem;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+      white-space: nowrap;
+    }
+    .btn-test:hover { border-color: var(--warm); color: var(--warm-dark); }
+
+    /* ── Detail drawer ── */
+    .detail-row {
+      display: none;
+      background: #fafaf7;
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.25rem 0.85rem 3.25rem;
+    }
+    .detail-row.open { display: block; }
+
+    .detail-pre {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.7rem;
+      line-height: 1.7;
+      color: #555;
+      white-space: pre-wrap;
+      word-break: break-all;
+      background: #fff;
+      border: 1px solid var(--border);
+      padding: 0.65rem 0.85rem;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .detail-meta {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.7rem;
+      color: var(--gray);
+      margin-top: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .detail-meta strong { color: var(--ink); }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed; bottom: 2rem; left: 50%;
+      transform: translateX(-50%) translateY(10px);
+      background: var(--ink); color: #fff;
+      padding: 0.65rem 1.4rem;
+      font-size: 0.8rem; border-radius: 2px;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.3s, transform 0.3s;
+      z-index: 999;
+    }
+    .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+    /* ── Progress bar ── */
+    .progress-bar {
+      height: 3px;
+      background: var(--border);
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+      border-radius: 2px;
+    }
+    .progress-bar-inner {
+      height: 100%;
+      background: var(--warm);
+      width: 0%;
+      transition: width 0.3s;
+    }
+
+    /* ── Config toggle ── */
+    .config-toggle {
+      font-size: 0.72rem;
+      color: var(--gray);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .config-toggle:hover { color: var(--ink); }
+  </style>
+</head>
+<body>
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-logo">AgentGateway <span>·</span> 渐进式测试</div>
+    <div class="topbar-nav">
+      <a class="active" onclick="scrollToSection('all')">全部</a>
+      <a onclick="scrollToSection('section-1')">Part 1</a>
+      <a onclick="scrollToSection('section-2')">Part 2</a>
+      <a onclick="scrollToSection('section-3')">Part 3</a>
+      <a onclick="scrollToSection('section-4')">Part 4</a>
+      <a onclick="scrollToSection('section-5')">Part 5</a>
+      <a onclick="scrollToSection('section-6')">Part 6</a>
+    </div>
+  </header>
+
+  <div class="container">
+
+    <!-- Config panel -->
+    <div class="config-panel" id="configPanel">
+      <h2>
+        环境配置
+        <span class="config-toggle" onclick="toggleConfig()" id="configToggle">收起</span>
+      </h2>
+      <div id="configBody">
+        <div class="config-grid">
+          <div class="config-field">
+            <label>Gateway URL</label>
+            <input id="cfgGatewayUrl" value="http://127.0.0.1:8080" />
+          </div>
+          <div class="config-field">
+            <label>Host Header</label>
+            <input id="cfgHost" value="www.example.com" />
+          </div>
+          <div class="config-field">
+            <label>Tenant ID</label>
+            <input id="cfgTenantId" value="acme" />
+          </div>
+          <div class="config-field">
+            <label>Keycloak URL (直连，仅调试用)</label>
+            <input id="cfgKeycloakUrl" value="http://localhost:9080" />
+          </div>
+          <div class="config-field">
+            <label>Master Client ID</label>
+            <input id="cfgMasterClientId" value="master-gateway-client" />
+          </div>
+          <div class="config-field">
+            <label>Master Client Secret</label>
+            <input id="cfgMasterClientSecret" value="" placeholder="从 bootstrap 获取" />
+          </div>
+          <div class="config-field">
+            <label>Tenant Client ID</label>
+            <input id="cfgTenantClientId" value="acme-gateway-client" />
+          </div>
+          <div class="config-field">
+            <label>Tenant Client Secret</label>
+            <input id="cfgTenantClientSecret" value="" placeholder="从 bootstrap 获取" />
+          </div>
+        </div>
+        <div class="config-actions">
+          <button class="btn btn-warm" onclick="fetchAllTokens()">获取全部 Token</button>
+          <button class="btn btn-outline" onclick="clearTokens()">清除 Token</button>
+          <span id="tokenStatus" style="font-size:0.75rem;color:var(--gray);">尚未获取 Token</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Page header -->
+    <div class="page-header">
+      <div>
+        <h1>渐进式安全链路测试</h1>
+        <p>按部署阶段验证 Gateway → JWT → OPA 安全策略是否符合预期</p>
+      </div>
+      <div class="summary-bar">
+        <div class="summary-pill pill-total" id="s-total">共 0 条</div>
+        <div class="summary-pill pill-ok"    id="s-ok">0 通过</div>
+        <div class="summary-pill pill-fail"  id="s-fail">0 失败</div>
+        <div class="summary-pill pill-skip"  id="s-skip">0 待测</div>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-bar"><div class="progress-bar-inner" id="progressBar"></div></div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button class="btn btn-primary" onclick="runAll()">全部测试</button>
+      <button class="btn btn-outline" onclick="clearAll()">重置结果</button>
+    </div>
+
+    <!-- Test sections rendered by JS -->
+    <div id="testSections"></div>
+
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ══════════════════════════════════════════════════════
+    //  状态
+    // ══════════════════════════════════════════════════════
+    let tokens = {
+      superadmin: '',
+      alice: '',
+      bob: '',
+      charlie: ''
+    };
+
+    function cfg(id) { return document.getElementById(id).value.trim(); }
+
+    // ══════════════════════════════════════════════════════
+    //  测试用例定义（按 README 前六部分）
+    // ══════════════════════════════════════════════════════
+    const SECTIONS = [
+      {
+        id: 'section-1',
+        title: '第一部分：部署 httpbin 和业务路由（基线验证）',
+        desc: '验证 Gateway → httpbin 基本通路，此阶段无任何认证授权，所有请求应返回 200。',
+        tests: [
+          {
+            id: 'p1-admin-get',
+            label: '管理 API 路由 — 无认证直通',
+            method: 'GET',
+            path: '/api/v1/admin/tenants',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            note: '基线测试：无 JWT 无 OPA，请求直达 httpbin 返回 200',
+          },
+          {
+            id: 'p1-tenant-get',
+            label: '租户 API 路由 — 无认证直通',
+            method: 'GET',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/roles`,
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            note: '基线测试：无 JWT 无 OPA，请求直达 httpbin 返回 200',
+          },
+        ],
+      },
+      {
+        id: 'section-2',
+        title: '第二部分：Keycloak + IDB Proxy（身份配置面）',
+        desc: '验证 Keycloak 部署和 IDB Proxy 的 bootstrap 接口可用性。此阶段管理面接口无需 token。',
+        tests: [
+          {
+            id: 'p2-idb-health',
+            label: 'IDB Proxy 健康检查',
+            method: 'GET',
+            path: '/proxy/idb/healthz',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            note: 'IDB Proxy 就绪检查（管理面策略未启用时无需 token）',
+          },
+          {
+            id: 'p2-master-bootstrap',
+            label: 'Bootstrap Master Realm（超级管理员）',
+            method: 'POST',
+            path: '/proxy/idb/bootstrap/master',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: [200, 409],
+            body: () => ({
+              client_id: cfg('cfgMasterClientId'),
+              super_admin_username: 'superadmin',
+              super_admin_password: 'superadmin123'
+            }),
+            note: '初始化 master realm，200=成功，409=已存在（均视为通过）',
+            onSuccess: (data) => {
+              if (data && data.client_secret) {
+                document.getElementById('cfgMasterClientSecret').value = data.client_secret;
+              }
+            },
+          },
+          {
+            id: 'p2-tenant-bootstrap',
+            label: 'Bootstrap 租户 Realm（acme）',
+            method: 'POST',
+            path: () => `/proxy/idb/tenants/${cfg('cfgTenantId')}/bootstrap`,
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: [200, 409],
+            body: () => ({
+              display_name: 'ACME Corp',
+              client_id: cfg('cfgTenantClientId'),
+              tenant_admin: {
+                username: 'alice',
+                password: 'password',
+                email: 'alice@acme.com',
+                groups: ['admin']
+              },
+              users: [
+                { username: 'bob', password: 'password', email: 'bob@acme.com', groups: ['users'], roles: ['analyst'] },
+                { username: 'charlie', password: 'password', email: 'charlie@acme.com', groups: ['users'], roles: ['viewer'] }
+              ]
+            }),
+            note: '初始化 acme 租户 realm，200=成功，409=已存在（均视为通过）',
+            onSuccess: (data) => {
+              if (data && data.client_secret) {
+                document.getElementById('cfgTenantClientSecret').value = data.client_secret;
+              }
+            },
+          },
+          {
+            id: 'p2-keycloak-discovery',
+            label: 'Keycloak OIDC Discovery（通过 Gateway）',
+            method: 'GET',
+            path: '/realms/master/.well-known/openid-configuration',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            note: '验证 Keycloak 免认证路由就绪（需已部署第三部分 OIDC 路由，否则 404 属正常）',
+          },
+        ],
+      },
+      {
+        id: 'section-3',
+        title: '第三部分：JWT 认证（多 Realm 支持）',
+        desc: '验证 JWT 策略绑定到业务路由后，无 token → 401，有效 token → 200。Keycloak OIDC 端点不受影响。',
+        tests: [
+          {
+            id: 'p3-oidc-discovery',
+            label: 'Keycloak OIDC Discovery — 免认证通行',
+            method: 'GET',
+            path: '/realms/master/.well-known/openid-configuration',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            note: '免认证专区，JWT 策略不影响 Keycloak OIDC 端点',
+          },
+          {
+            id: 'p3-jwks',
+            label: 'Keycloak JWKS 公钥 — 免认证通行',
+            method: 'GET',
+            path: '/realms/master/protocol/openid-connect/certs',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            note: '免认证专区，JWT 策略不影响 JWKS 端点',
+          },
+          {
+            id: 'p3-no-token-401',
+            label: '业务 API 无 token → 401',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: null,
+            expectStatus: 401,
+            note: 'JWT 策略生效后，无 token 访问业务 API 返回 401 Unauthorized',
+          },
+          {
+            id: 'p3-fake-token-401',
+            label: '伪造 token → 401',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: '__fake__',
+            expectStatus: 401,
+            note: '使用伪造 token 验证签名校验，应返回 401',
+          },
+          {
+            id: 'p3-superadmin-200',
+            label: 'SuperAdmin 带 token → 200',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: 'superadmin',
+            expectStatus: 200,
+            body: () => ({ tenant_name: 'test-corp' }),
+            note: 'JWT 层只验证签名有效性，SuperAdmin token 合法 → 200',
+          },
+          {
+            id: 'p3-alice-200',
+            label: 'Alice 带 token → 200',
+            method: 'POST',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/roles`,
+            authRequired: true,
+            tokenUser: 'alice',
+            expectStatus: 200,
+            body: () => ({ role_name: 'test' }),
+            note: 'JWT 层只验证签名有效性，Alice token 合法 → 200',
+          },
+          {
+            id: 'p3-bob-admin-200',
+            label: 'Bob 带 token 访问管理 API → 200（JWT 不做角色检查）',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: 'bob',
+            expectStatus: 200,
+            body: () => ({ tenant_name: 'test-corp' }),
+            note: 'JWT 层不做角色检查，普通用户也能通过 → OPA 才做权限控制',
+          },
+        ],
+      },
+      {
+        id: 'section-4',
+        title: '第四部分：OPA 授权（多租户隔离 RBAC）',
+        desc: '验证 OPA ext_authz 策略叠加后：正确角色 → 200，错误角色 → 403，跨租户 → 403。',
+        tests: [
+          {
+            id: 'p4-superadmin-create-tenant',
+            label: 'SuperAdmin 创建租户 → 200',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: 'superadmin',
+            expectStatus: 200,
+            body: () => ({ tenant_name: 'newcorp' }),
+            note: 'super_admin 有 /api/v1/admin/* 的完全权限',
+          },
+          {
+            id: 'p4-bob-admin-403',
+            label: 'Bob 访问管理 API → 403',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: 'bob',
+            expectStatus: 403,
+            body: () => ({ tenant_name: 'newcorp' }),
+            note: 'OPA 生效后，普通用户无权访问管理 API',
+          },
+          {
+            id: 'p4-alice-own-tenant',
+            label: 'Alice 管理本租户 → 200',
+            method: 'POST',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/roles`,
+            authRequired: true,
+            tokenUser: 'alice',
+            expectStatus: 200,
+            body: () => ({ role_name: 'test' }),
+            note: 'tenant_admin 可管理本租户资源',
+          },
+          {
+            id: 'p4-alice-cross-tenant',
+            label: 'Alice 跨租户访问 → 403',
+            method: 'GET',
+            path: '/api/v1/tenants/other-corp/roles',
+            authRequired: true,
+            tokenUser: 'alice',
+            expectStatus: 403,
+            note: 'OPA 做租户隔离，token.tenant_id=acme 不匹配 other-corp → 403',
+          },
+          {
+            id: 'p4-no-token-401',
+            label: '无 token 访问业务 API（仍然 401）',
+            method: 'GET',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: null,
+            expectStatus: 401,
+            note: 'JWT 层先于 OPA，无 token 依旧 401（非 403）',
+          },
+        ],
+      },
+      {
+        id: 'section-5',
+        title: '第五部分：管理面 JWT + OPA 策略',
+        desc: '验证管理面接口（/proxy/idb/*、/proxy/pep/*）启用独立 JWT + OPA 策略后的访问控制。',
+        tests: [
+          {
+            id: 'p5-mgmt-no-token',
+            label: '管理面无 token → 401',
+            method: 'GET',
+            path: '/proxy/idb/healthz',
+            authRequired: true,
+            tokenUser: null,
+            expectStatus: 401,
+            note: '管理面策略启用后，无 token 返回 401（之前返回 200）',
+          },
+          {
+            id: 'p5-superadmin-mgmt',
+            label: 'SuperAdmin 访问管理面 → 200',
+            method: 'GET',
+            path: '/proxy/idb/healthz',
+            authRequired: true,
+            tokenUser: 'superadmin',
+            expectStatus: 200,
+            note: '超级管理员有管理面完整权限',
+          },
+          {
+            id: 'p5-bob-mgmt-403',
+            label: 'Bob 访问管理面 bootstrap → 403',
+            method: 'POST',
+            path: () => `/proxy/idb/tenants/${cfg('cfgTenantId')}/bootstrap`,
+            authRequired: true,
+            tokenUser: 'bob',
+            expectStatus: 403,
+            body: () => ({}),
+            note: '普通用户无管理面 bootstrap 权限',
+          },
+          {
+            id: 'p5-alice-mgmt-tenant',
+            label: 'Alice 访问本租户管理面 → 200',
+            method: 'GET',
+            path: () => `/proxy/idb/tenants/${cfg('cfgTenantId')}/users`,
+            authRequired: true,
+            tokenUser: 'alice',
+            expectStatus: 200,
+            note: 'tenant_admin 可查看本租户用户列表',
+          },
+          {
+            id: 'p5-pep-no-token',
+            label: 'PEP Proxy 无 token → 401',
+            method: 'GET',
+            path: () => `/proxy/pep/tenants/${cfg('cfgTenantId')}/policies`,
+            authRequired: true,
+            tokenUser: null,
+            expectStatus: 401,
+            note: 'PEP Proxy 管理面也受策略保护',
+          },
+        ],
+      },
+      {
+        id: 'section-6',
+        title: '第六部分：端到端完整验证',
+        desc: '覆盖全部核心场景：免认证、认证、授权、多租户隔离、角色 RBAC。',
+        tests: [
+          {
+            id: 'p6-oidc-discovery',
+            label: '场景 0a — Keycloak OIDC Discovery',
+            method: 'GET',
+            path: '/realms/master/.well-known/openid-configuration',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            note: '免认证专区',
+          },
+          {
+            id: 'p6-gateway-token',
+            label: '场景 0b — 通过 Gateway 获取 token',
+            method: 'POST',
+            path: '/realms/master/protocol/openid-connect/token',
+            authRequired: false,
+            tokenUser: null,
+            expectStatus: 200,
+            isTokenRequest: true,
+            note: '免认证专区，token 签发端点可用',
+          },
+          {
+            id: 'p6-no-token',
+            label: '场景 1 — 无 token 访问业务 API → 401',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: null,
+            expectStatus: 401,
+            note: '无 token → JWT 层拦截 → 401',
+          },
+          {
+            id: 'p6-fake-token',
+            label: '场景 2 — 伪造 token → 401',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: '__fake__',
+            expectStatus: 401,
+            note: '伪造 token → JWT 签名验证失败 → 401',
+          },
+          {
+            id: 'p6-superadmin-create',
+            label: '场景 3 — SuperAdmin 创建租户 → 200',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: 'superadmin',
+            expectStatus: 200,
+            body: () => ({ tenant_name: 'newcorp' }),
+            note: 'super_admin + 正确路径 → 200',
+          },
+          {
+            id: 'p6-bob-admin',
+            label: '场景 4 — 普通用户访问管理 API → 403',
+            method: 'POST',
+            path: '/api/v1/admin/tenants',
+            authRequired: true,
+            tokenUser: 'bob',
+            expectStatus: 403,
+            body: () => ({ tenant_name: 'newcorp' }),
+            note: 'bob 无 admin 权限 → OPA 拦截 → 403',
+          },
+          {
+            id: 'p6-alice-roles-get',
+            label: '场景 5 — 租户管理员查看角色 → 200',
+            method: 'GET',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/roles`,
+            authRequired: true,
+            tokenUser: 'alice',
+            expectStatus: 200,
+            note: 'tenant_admin 查看本租户角色 → 200',
+          },
+          {
+            id: 'p6-alice-policy-post',
+            label: '场景 6 — 租户管理员添加策略 → 200',
+            method: 'POST',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/policies`,
+            authRequired: true,
+            tokenUser: 'alice',
+            expectStatus: 200,
+            body: () => ({ policy_name: 'test' }),
+            note: 'tenant_admin 管理本租户策略 → 200',
+          },
+          {
+            id: 'p6-bob-policy',
+            label: '场景 7 — 普通用户管理策略 → 403',
+            method: 'POST',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/policies`,
+            authRequired: true,
+            tokenUser: 'bob',
+            expectStatus: 403,
+            body: () => ({ policy_name: 'test' }),
+            note: 'bob 无策略管理权限 → 403',
+          },
+          {
+            id: 'p6-cross-tenant',
+            label: '场景 8 — 跨租户访问 → 403',
+            method: 'GET',
+            path: '/api/v1/tenants/other-corp/roles',
+            authRequired: true,
+            tokenUser: 'alice',
+            expectStatus: 403,
+            note: 'alice.tenant_id=acme ≠ other-corp → 租户隔离 → 403',
+          },
+          {
+            id: 'p6-bob-app-get',
+            label: '场景 9 — 业务 API GET（analyst 读权限）→ 200',
+            method: 'GET',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/apps/order-service/orders`,
+            authRequired: true,
+            tokenUser: 'bob',
+            expectStatus: 200,
+            note: 'bob(analyst) 有 order-service 读权限 → 200',
+          },
+          {
+            id: 'p6-bob-app-post',
+            label: '场景 10 — 业务 API POST（analyst 无写权限）→ 403',
+            method: 'POST',
+            path: () => `/api/v1/tenants/${cfg('cfgTenantId')}/apps/order-service/orders`,
+            authRequired: true,
+            tokenUser: 'bob',
+            expectStatus: 403,
+            body: () => ({ order_id: 'test' }),
+            note: 'bob(analyst) 无 order-service 写权限 → 403',
+          },
+        ],
+      },
+    ];
+
+    // ══════════════════════════════════════════════════════
+    //  渲染
+    // ══════════════════════════════════════════════════════
+    let allTests = [];
+    const container = document.getElementById('testSections');
+
+    SECTIONS.forEach((sec) => {
+      const sectionEl = document.createElement('div');
+      sectionEl.className = 'section';
+      sectionEl.id = sec.id;
+
+      const testCount = sec.tests.length;
+      sectionEl.innerHTML = `
+        <div class="section-header" onclick="toggleSection('${sec.id}')">
+          <h3>
+            ${sec.title}
+            <span class="section-badge">${testCount} 项测试</span>
+          </h3>
+          <div class="section-actions">
+            <span class="section-counter" id="counter-${sec.id}">0/${testCount}</span>
+            <button class="btn-section" onclick="event.stopPropagation();runSection('${sec.id}')">运行本节</button>
+          </div>
+        </div>
+        <div class="section-body" id="body-${sec.id}">
+          <div class="section-desc">${sec.desc}</div>
+          ${sec.tests.map((t, i) => {
+            const globalIdx = allTests.length + i;
+            const pathDisplay = typeof t.path === 'function' ? t.path() : t.path;
+            const methodTag = `<span class="tag tag-${t.method.toLowerCase()}">${t.method}</span>`;
+            const authTag = t.authRequired
+              ? `<span class="tag tag-auth">需鉴权</span>`
+              : `<span class="tag tag-open">公开</span>`;
+            const userTag = t.tokenUser && t.tokenUser !== '__fake__'
+              ? `<span class="tag" style="background:var(--purple-bg);color:var(--purple);">${t.tokenUser}</span>`
+              : '';
+            const expectDisplay = Array.isArray(t.expectStatus) ? t.expectStatus.join('/') : t.expectStatus;
+            return `
+              <div class="test-row" id="trow-${globalIdx}">
+                <div class="row-index">${String(globalIdx + 1).padStart(2, '0')}</div>
+                <div class="row-main">
+                  <div class="row-label">${t.label} ${methodTag} ${authTag} ${userTag}</div>
+                  <div class="row-url">${pathDisplay}</div>
+                </div>
+                <div class="row-expect">期望 ${expectDisplay}</div>
+                <div class="row-actions">
+                  <div class="status-dot pending" id="dot-${globalIdx}"></div>
+                  <div class="result-chip chip-idle" id="chip-${globalIdx}">&mdash;</div>
+                  <button class="btn-test" onclick="runOne(${globalIdx})">测试</button>
+                </div>
+              </div>
+              <div class="detail-row" id="detail-${globalIdx}">
+                <div class="detail-pre" id="pre-${globalIdx}">尚未测试</div>
+                <div class="detail-meta" id="meta-${globalIdx}"></div>
+              </div>`;
+          }).join('')}
+        </div>`;
+
+      container.appendChild(sectionEl);
+      sec.tests.forEach(t => { allTests.push({ ...t, sectionId: sec.id }); });
+    });
+
+    updateSummary();
+
+    // ══════════════════════════════════════════════════════
+    //  Token 获取
+    // ══════════════════════════════════════════════════════
+    async function fetchToken(realm, clientId, clientSecret, username, password) {
+      const gwUrl = cfg('cfgGatewayUrl');
+      const host = cfg('cfgHost');
+      const body = new URLSearchParams({
+        grant_type: 'password',
+        client_id: clientId,
+        client_secret: clientSecret,
+        username: username,
+        password: password,
+      });
+      const res = await fetch(`${gwUrl}/realms/${realm}/protocol/openid-connect/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Host': host,
+        },
+        body: body,
+      });
+      if (!res.ok) throw new Error(`Token fetch failed: ${res.status}`);
+      const data = await res.json();
+      return data.access_token;
+    }
+
+    async function fetchAllTokens() {
+      const status = document.getElementById('tokenStatus');
+      status.textContent = '获取中...';
+      status.style.color = 'var(--warm)';
+      try {
+        const masterClientId = cfg('cfgMasterClientId');
+        const masterSecret = cfg('cfgMasterClientSecret');
+        const tenantClientId = cfg('cfgTenantClientId');
+        const tenantSecret = cfg('cfgTenantClientSecret');
+        const tenantId = cfg('cfgTenantId');
+
+        if (!masterSecret || !tenantSecret) {
+          status.textContent = '请先填写 Client Secret（可通过 Part 2 bootstrap 自动获取）';
+          status.style.color = 'var(--red)';
+          return;
+        }
+
+        const results = await Promise.allSettled([
+          fetchToken('master', masterClientId, masterSecret, 'superadmin', 'superadmin123'),
+          fetchToken(tenantId, tenantClientId, tenantSecret, 'alice', 'password'),
+          fetchToken(tenantId, tenantClientId, tenantSecret, 'bob', 'password'),
+          fetchToken(tenantId, tenantClientId, tenantSecret, 'charlie', 'password'),
+        ]);
+
+        const names = ['superadmin', 'alice', 'bob', 'charlie'];
+        let ok = 0;
+        results.forEach((r, i) => {
+          if (r.status === 'fulfilled' && r.value) {
+            tokens[names[i]] = r.value;
+            ok++;
+          }
+        });
+
+        status.textContent = `已获取 ${ok}/4 个 Token`;
+        status.style.color = ok === 4 ? 'var(--green)' : 'var(--orange)';
+        if (ok > 0) showToast(`成功获取 ${ok} 个 Token`);
+      } catch (e) {
+        status.textContent = `获取失败: ${e.message}`;
+        status.style.color = 'var(--red)';
+      }
+    }
+
+    function clearTokens() {
+      tokens = { superadmin: '', alice: '', bob: '', charlie: '' };
+      document.getElementById('tokenStatus').textContent = '已清除所有 Token';
+      document.getElementById('tokenStatus').style.color = 'var(--gray)';
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  执行单条测试
+    // ══════════════════════════════════════════════════════
+    async function runOne(i) {
+      const test = allTests[i];
+      const dot = document.getElementById(`dot-${i}`);
+      const chip = document.getElementById(`chip-${i}`);
+      const pre = document.getElementById(`pre-${i}`);
+      const meta = document.getElementById(`meta-${i}`);
+      const detail = document.getElementById(`detail-${i}`);
+      const row = document.getElementById(`trow-${i}`);
+
+      detail.classList.add('open');
+      dot.className = 'status-dot loading';
+      chip.className = 'result-chip chip-idle';
+      chip.textContent = '...';
+      pre.textContent = '请求中...';
+      meta.innerHTML = '';
+      row.style.background = '';
+
+      const gwUrl = cfg('cfgGatewayUrl');
+      const host = cfg('cfgHost');
+      const path = typeof test.path === 'function' ? test.path() : test.path;
+      const url = `${gwUrl}${path}`;
+
+      const t0 = Date.now();
+
+      try {
+        const headers = { 'Host': host };
+
+        // Token handling
+        if (test.tokenUser === '__fake__') {
+          headers['Authorization'] = 'Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmYWtlIn0.fake-signature';
+        } else if (test.tokenUser && tokens[test.tokenUser]) {
+          headers['Authorization'] = `Bearer ${tokens[test.tokenUser]}`;
+        } else if (test.tokenUser && test.tokenUser !== '__fake__' && !tokens[test.tokenUser]) {
+          // Need token but don't have it
+          const elapsed = Date.now() - t0;
+          setResult(i, false, 'N/A', `缺少 ${test.tokenUser} 的 Token，请先在配置面板获取 Token`, elapsed, test);
+          updateSummary();
+          return;
+        }
+
+        const fetchOpts = { method: test.method, headers };
+
+        if (test.isTokenRequest) {
+          headers['Content-Type'] = 'application/x-www-form-urlencoded';
+          const masterClientId = cfg('cfgMasterClientId');
+          const masterSecret = cfg('cfgMasterClientSecret');
+          fetchOpts.body = new URLSearchParams({
+            grant_type: 'password',
+            client_id: masterClientId,
+            client_secret: masterSecret || 'placeholder',
+            username: 'superadmin',
+            password: 'superadmin123',
+          });
+        } else if (test.body) {
+          headers['Content-Type'] = 'application/json';
+          fetchOpts.body = JSON.stringify(typeof test.body === 'function' ? test.body() : test.body);
+        }
+
+        const res = await fetch(url, fetchOpts);
+        const elapsed = Date.now() - t0;
+
+        let body = '';
+        try { body = await res.text(); } catch(_) {}
+
+        let display = body;
+        try { display = JSON.stringify(JSON.parse(body), null, 2); } catch(_) {}
+
+        const expectArr = Array.isArray(test.expectStatus) ? test.expectStatus : [test.expectStatus];
+        const passed = expectArr.includes(res.status);
+
+        setResult(i, passed, res.status, display, elapsed, test);
+
+        // Callback on success
+        if (passed && test.onSuccess) {
+          try {
+            const jsonData = JSON.parse(body);
+            test.onSuccess(jsonData);
+          } catch(_) {}
+        }
+
+      } catch(err) {
+        const elapsed = Date.now() - t0;
+        setResult(i, false, 'ERR', `请求失败：${err.message}\n\n可能原因：\n- CORS 限制（浏览器直接请求可能被跨域策略拦截）\n- Gateway 未启动 / port-forward 未运行\n- 网络不通`, elapsed, test);
+      }
+
+      updateSummary();
+      updateProgress();
+    }
+
+    function setResult(i, passed, status, body, elapsed, test) {
+      const dot = document.getElementById(`dot-${i}`);
+      const chip = document.getElementById(`chip-${i}`);
+      const pre = document.getElementById(`pre-${i}`);
+      const meta = document.getElementById(`meta-${i}`);
+      const row = document.getElementById(`trow-${i}`);
+
+      const expectDisplay = Array.isArray(test.expectStatus) ? test.expectStatus.join('/') : test.expectStatus;
+
+      if (passed) {
+        dot.className = 'status-dot ok';
+        chip.className = 'result-chip chip-ok';
+        chip.textContent = `${status}`;
+        row.style.background = '#f0faf5';
+      } else {
+        dot.className = 'status-dot fail';
+        chip.className = 'result-chip chip-fail';
+        chip.textContent = `${status}`;
+        row.style.background = '#fdf0f0';
+      }
+
+      pre.textContent = body || '（无响应体）';
+      meta.innerHTML = `
+        <span>耗时 <strong>${elapsed} ms</strong></span>
+        <span>返回 <strong>${status}</strong></span>
+        <span>期望 <strong>${expectDisplay}</strong></span>
+        <span>结果 <strong>${passed ? '符合预期' : '不符预期'}</strong></span>
+        ${test.note ? `<span style="color:var(--gray)">${test.note}</span>` : ''}`;
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  批量执行
+    // ══════════════════════════════════════════════════════
+    async function runAll() {
+      for (let i = 0; i < allTests.length; i++) {
+        await runOne(i);
+        await delay(120);
+      }
+      showToast(`全部 ${allTests.length} 条测试完成`);
+    }
+
+    async function runSection(sectionId) {
+      const indices = [];
+      allTests.forEach((t, i) => { if (t.sectionId === sectionId) indices.push(i); });
+      for (const i of indices) {
+        await runOne(i);
+        await delay(120);
+      }
+      showToast(`${sectionId} 测试完成（${indices.length} 条）`);
+    }
+
+    function clearAll() {
+      allTests.forEach((_, i) => {
+        document.getElementById(`dot-${i}`).className = 'status-dot pending';
+        document.getElementById(`chip-${i}`).className = 'result-chip chip-idle';
+        document.getElementById(`chip-${i}`).innerHTML = '&mdash;';
+        document.getElementById(`pre-${i}`).textContent = '尚未测试';
+        document.getElementById(`meta-${i}`).innerHTML = '';
+        document.getElementById(`detail-${i}`).classList.remove('open');
+        document.getElementById(`trow-${i}`).style.background = '';
+      });
+      updateSummary();
+      updateProgress();
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  Summary & Progress
+    // ══════════════════════════════════════════════════════
+    function updateSummary() {
+      let ok = 0, fail = 0, skip = 0;
+      allTests.forEach((_, i) => {
+        const cls = document.getElementById(`dot-${i}`).className;
+        if (cls.includes('ok')) ok++;
+        else if (cls.includes('fail')) fail++;
+        else skip++;
+      });
+
+      document.getElementById('s-total').textContent = `共 ${allTests.length} 条`;
+      document.getElementById('s-ok').textContent    = `${ok} 通过`;
+      document.getElementById('s-fail').textContent  = `${fail} 失败`;
+      document.getElementById('s-skip').textContent  = `${skip} 待测`;
+
+      // Update section counters
+      SECTIONS.forEach(sec => {
+        let sOk = 0, sTotal = 0;
+        allTests.forEach((t, i) => {
+          if (t.sectionId === sec.id) {
+            sTotal++;
+            if (document.getElementById(`dot-${i}`).className.includes('ok')) sOk++;
+          }
+        });
+        const counter = document.getElementById(`counter-${sec.id}`);
+        if (counter) counter.textContent = `${sOk}/${sTotal}`;
+      });
+    }
+
+    function updateProgress() {
+      let done = 0;
+      allTests.forEach((_, i) => {
+        const cls = document.getElementById(`dot-${i}`).className;
+        if (cls.includes('ok') || cls.includes('fail')) done++;
+      });
+      const pct = allTests.length > 0 ? (done / allTests.length * 100) : 0;
+      document.getElementById('progressBar').style.width = pct + '%';
+    }
+
+    // ══════════════════════════════════════════════════════
+    //  UI 辅助
+    // ══════════════════════════════════════════════════════
+    function toggleSection(sectionId) {
+      const body = document.getElementById(`body-${sectionId}`);
+      body.classList.toggle('collapsed');
+    }
+
+    function toggleConfig() {
+      const body = document.getElementById('configBody');
+      const toggle = document.getElementById('configToggle');
+      if (body.style.display === 'none') {
+        body.style.display = '';
+        toggle.textContent = '收起';
+      } else {
+        body.style.display = 'none';
+        toggle.textContent = '展开';
+      }
+    }
+
+    function scrollToSection(id) {
+      if (id === 'all') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        const el = document.getElementById(id);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.add('show');
+      clearTimeout(el._t);
+      el._t = setTimeout(() => el.classList.remove('show'), 2500);
+    }
+  </script>
+</body>
+</html>

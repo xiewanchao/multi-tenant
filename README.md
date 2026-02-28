@@ -99,6 +99,10 @@
 │   ├── 55-mgmt-opa-ext-auth-policy.yaml   ← 管理面 OPA ext_authz 策略
 │   ├── 56-agentgateway-sidecar-opa-service.yaml ← Sidecar OPA Service
 │   └── 61-jwt-auth-policy-add-globex.template.yaml ← 新增租户 JWT Provider
+├── manifests/bundles/                    ← 合并版 K8s 部署清单
+│   ├── opal-system.yaml
+│   ├── proxy-system.yaml
+│   └── proxy-gateway-routes.yaml
 │
 ├── proxies/                               ← FastAPI 代理服务
 │   ├── idb-proxy/                         ← 身份管理代理（Keycloak facade）
@@ -109,10 +113,6 @@
 │   │   ├── app/main.py
 │   │   ├── Dockerfile
 │   │   └── requirements.txt
-│   ├── k8s/                               ← 合并版 K8s 部署清单
-│   │   ├── opal-system.yaml
-│   │   ├── proxy-system.yaml
-│   │   └── proxy-gateway-routes.yaml
 │   └── README.md
 │
 ├── charts/agentgateway-multi-tenant/      ← Helm Umbrella Chart
@@ -144,7 +144,7 @@
 | 方式 | 适用场景 | 入口 |
 |---|---|---|
 | **分步 Manifest（本教程）** | 学习理解、开发调试 | `manifests/tutorial/00~61-*.yaml` |
-| **合并 Manifest** | 快速部署、CI/CD | `proxies/k8s/*.yaml` |
+| **合并 Manifest** | 快速部署、CI/CD | `manifests/bundles/*.yaml` |
 | **Helm Umbrella Chart** | 生产环境、参数化部署 | `charts/agentgateway-multi-tenant/` |
 
 Helm 部署详见 [`docs/helm-umbrella-deploy.md`](docs/helm-umbrella-deploy.md)。
@@ -637,12 +637,16 @@ curl -i http://127.0.0.1:8080/api/v1/admin/tenants -H "host: www.example.com"
 
 ### 3.3.3 获取各用户 token 并验证
 
-> **通过 Gateway 获取 token**：如果 Keycloak 免认证路由已配置，也可以通过 Gateway 地址获取 token（将 `$KEYCLOAK_URL` 替换为 `http://127.0.0.1:8080`，并添加 host header）。这里继续使用直连地址以保持配置阶段的简洁性。
+> **强烈建议统一通过 Gateway 获取 token**（避免 `InvalidIssuer`）：将 `KEYCLOAK_URL` 设为 `http://127.0.0.1:8080`，并在请求中固定 `Host: www.example.com`，使 token 中的 `iss` 与 JWT 策略里的 `issuer` 一致。
 
 ```bash
+# 使用 Gateway 入口获取 token（推荐）
+export KEYCLOAK_URL=http://127.0.0.1:8080
+
 # 超级管理员 token（来自 master realm）
 ACCESS_TOKEN_SUPERADMIN=$(curl -s -X POST \
   "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "host: www.example.com" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
   -d "client_id=${MASTER_CLIENT_ID}" \
@@ -654,6 +658,7 @@ ACCESS_TOKEN_SUPERADMIN=$(curl -s -X POST \
 # 租户管理员 token（来自 acme realm）
 ACCESS_TOKEN_ALICE=$(curl -s -X POST \
   "${KEYCLOAK_URL}/realms/${TENANT_ID}/protocol/openid-connect/token" \
+  -H "host: www.example.com" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
   -d "client_id=${ACME_CLIENT_ID}" \
@@ -665,6 +670,7 @@ ACCESS_TOKEN_ALICE=$(curl -s -X POST \
 # 普通用户 token（来自 acme realm）
 ACCESS_TOKEN_BOB=$(curl -s -X POST \
   "${KEYCLOAK_URL}/realms/${TENANT_ID}/protocol/openid-connect/token" \
+  -H "host: www.example.com" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "grant_type=password" \
   -d "client_id=${ACME_CLIENT_ID}" \
@@ -677,6 +683,8 @@ echo "SuperAdmin token: ${ACCESS_TOKEN_SUPERADMIN:0:20}..."
 echo "Alice token: ${ACCESS_TOKEN_ALICE:0:20}..."
 echo "Bob token: ${ACCESS_TOKEN_BOB:0:20}..."
 ```
+
+> 若你坚持使用 `http://localhost:9080` 直连 Keycloak，请同步将 JWT 策略中的 `issuer` 改为 `http://localhost:9080/realms/*`；否则会出现 `Error(InvalidIssuer)`。
 
 > 可以用 https://jwt.io 解码 token，确认包含 `tenant_id`、`roles` 等 claims。
 
@@ -785,7 +793,7 @@ kubectl get svc -n opa opa
 > 本教程使用 `OPAL Server + OPAL Client` 做"数据变更发布与实时分发"。`PEP Proxy` 不再直接写 OPA Data API，而是调用 OPAL `/data/config`；再由 `OPAL Client` 将更新同步到 OPA。
 
 ```bash
-kubectl apply -f proxies/k8s/opal-system.yaml
+kubectl apply -f manifests/bundles/opal-system.yaml
 
 kubectl -n opal rollout status deploy/postgres
 kubectl -n opal rollout status deploy/opal-server
@@ -795,7 +803,7 @@ kubectl get svc -n opal opal-server
 ```
 
 > **说明**：
-> - `proxies/k8s/opal-system.yaml` 内置了演示用 token（`THIS_IS_A_DEV_SECRET_CHANGE_ME`），请在生产环境替换。
+> - `manifests/bundles/opal-system.yaml` 内置了演示用 token（`THIS_IS_A_DEV_SECRET_CHANGE_ME`），请在生产环境替换。
 > - `opal-client` 以 standalone 模式工作，目标 OPA 为 `http://opa.opa.svc.cluster.local:8181/v1`。
 > - `OPAL_DATA_CONFIG_SOURCES` 已指向 `pep-proxy` 的快照接口 `/opal/snapshots/tenant_policies`，用于客户端重连/重启后的数据补齐。
 > - `OPAL_POLICY_UPDATER_ENABLED=false`（注意 `OPAL_` 前缀不可省略）禁用 Rego 策略同步，仅启用数据同步，避免 OPAL 覆盖 ConfigMap 挂载的 OPA 策略文件。
